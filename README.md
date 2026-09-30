@@ -1,4 +1,4 @@
-# MM-Downloader
+# Ezmanga
 
 Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.shueisha.co.jp). It's a pluggable framework: add a new comic platform as a `source`. Use the `--source` flag to pick one.
 
