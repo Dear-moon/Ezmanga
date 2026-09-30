@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .sources import SOURCES, get_source
 from .core.epub import build_epub
-from .core.driver import download_title
+from .core.archive import build_archives
+from .core.driver import download_title, write_capture
 
 
 def build_parser():
@@ -25,7 +26,12 @@ def build_parser():
     ap.add_argument("--output", default=None, help="输出目录")
     ap.add_argument("--throttle", type=float, default=0.3, help="单页下载间隔秒数")
     ap.add_argument("--epub", action="store_true", help="下载后打包为 EPUB")
-    ap.add_argument("--epub-only", help="只把已下载目录打包为 EPUB，不下载")
+    ap.add_argument("--zip", action="store_true", help="下载后每章/卷打包为 ZIP")
+    ap.add_argument("--cbz", action="store_true", help="下载后每章/卷打包为 CBZ")
+    export_only = ap.add_mutually_exclusive_group()
+    export_only.add_argument("--epub-only", help="只把已下载目录打包为 EPUB，不下载")
+    export_only.add_argument("--zip-only", help="只把已下载漫画目录按章/卷打包为 ZIP，不下载")
+    export_only.add_argument("--cbz-only", help="只把已下载漫画目录按章/卷打包为 CBZ，不下载")
     ap.add_argument("--token", help="source 的鉴权 token（如东立 Bearer 值）")
     ap.add_argument("--book-group", help="source 可选参数（如东立的 BookGroupID）")
     ap.add_argument("--setup", action="store_true",
@@ -57,8 +63,10 @@ def _validate(source, args):
         raise SystemExit(f"[error] {source.name} 不支持 --title")
     if args.title and "book" in caps and (args.url or args.list):
         raise SystemExit("[error] book 源不能用 --url/--list（其只吃 --title）")
-    if args.epub_only and args.title:
-        raise SystemExit("[error] --epub-only 与 --title 不能同时使用")
+    if (args.epub_only or args.zip_only or args.cbz_only) and args.title:
+        raise SystemExit("[error] 导出已有目录的参数与 --title 不能同时使用")
+    if (args.zip_only or args.cbz_only) and (args.url or args.list or args.setup or args.adobe_setup):
+        raise SystemExit("[error] --zip-only/--cbz-only 不能与下载、列表或账号配置参数同时使用")
 
 
 def main(argv=None):
@@ -73,10 +81,12 @@ def main(argv=None):
         source.book_group = args.book_group
     _validate(source, args)
 
-    # --epub-only 源无关，只管磁盘树
-    if args.epub_only:
-        epub_path = build_epub(args.epub_only, language=args.lang or "en")
-        print(f"[epub] {epub_path}")
+    export_dir = args.epub_only or args.zip_only or args.cbz_only
+    if export_dir:
+        if args.epub_only or args.epub:
+            epub_path = build_epub(export_dir, language=args.lang or "en")
+            print(f"[epub] {epub_path}")
+        _export_archives(export_dir, args)
         raise SystemExit(0)
 
     # --setup：一次性激活（如 Kobo）
@@ -122,32 +132,25 @@ def main(argv=None):
             lang=args.lang, quality=args.quality,
             chapter_range=chap_range, throttle=args.throttle, epub=args.epub,
         )
+        _export_archives(title_dir, args)
         print("[done]")
         return
 
     build_parser().print_help()
 
 
+def _export_archives(title_dir, args):
+    for extension, enabled in (("zip", args.zip or args.zip_only), ("cbz", args.cbz or args.cbz_only)):
+        if enabled:
+            for archive_path in build_archives(title_dir, extension=extension):
+                print(f"[{extension}] {archive_path}")
+
+
 def _write_capture(source, result, out_dir, args):
-    """capture 轨落盘（浏览器辅助 source 如 BookWalker/B站）。"""
-    from .core.driver import save_captured_chapter  # 直接写已提取的 Page.data
-
-    out_dir = Path(out_dir)
-    title_dir = out_dir / (result.title.name or "captured")
-    title_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[title] {result.title.name}")
-
-    for idx, ch in enumerate(result.chapters, 1):
-        ch_dir = title_dir / (ch.name or f"chapter_{idx:03d}")
-        ch_dir.mkdir(parents=True, exist_ok=True)
-        n = save_captured_chapter(ch_dir, ch.pages or [])
-        print(f"  [{idx}/{len(result.chapters)}] {ch.name} ({n} pages)")
-
-    if args.epub:
-        epub_path = build_epub(title_dir, title=result.title.name,
-                               author=result.title.author, language=args.lang or "en")
-        print(f"[epub] {epub_path}")
-    print("[done]")
+    """Write captured pages and requested export formats."""
+    saved = write_capture(source, result, out_dir, epub=args.epub, lang=args.lang)
+    _export_archives(Path(out_dir) / (result.title.name or "captured"), args)
+    return saved
 
 
 if __name__ == "__main__":

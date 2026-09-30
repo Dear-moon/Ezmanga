@@ -57,6 +57,29 @@ def _save_chapter(source, chapter, ch_dir, pages, *, lang=None, quality=None,
     return fails
 
 
+def write_capture(source, result, out_dir, *, epub=False, lang=None):
+    """capture/book 轨落盘：直接写已提取的 Page.data（BookWalker/B站/Kobo 整本）。
+
+    由 cli._write_capture 委托，GUI 也直接调这里，避免依赖 cli 的 argparse。
+    """
+    out_dir = Path(out_dir)
+    title_dir = out_dir / (result.title.name or "captured")
+    title_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[title] {result.title.name}")
+
+    for idx, ch in enumerate(result.chapters, 1):
+        ch_dir = title_dir / (ch.name or f"chapter_{idx:03d}")
+        ch_dir.mkdir(parents=True, exist_ok=True)
+        n = save_captured_chapter(ch_dir, ch.pages or [])
+        print(f"  [{idx}/{len(result.chapters)}] {ch.name} ({n} pages)")
+
+    if epub:
+        epub_path = build_epub(title_dir, title=result.title.name,
+                               author=result.title.author, language=lang or "en")
+        print(f"[epub] {epub_path}")
+    print("[done]")
+
+
 def download_title(source, title_id, out_dir, *, lang=None, quality=None,
                    chapter_range=None, throttle=0.3, epub=False):
     """crawl 轨主入口：按 title_id 下载整部。返回 (title_dir, title)。"""
