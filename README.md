@@ -24,13 +24,13 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
 | `tongli` | ✅ implemented | auto login (`refreshToken`) | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
 | `bookwalker` | ✅ implemented | logged-in browser | Native JPG restoration with ordinary-browser BW helper; optional debug-browser Canvas capture; not in Actions |
-| `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
+| `bilibili` | ✅ implemented | anonymous HTTP; browser for Canvas mode | Python/WASM API and image decryption; optional browser Canvas capture |
 | `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `lightnovel` | ✅ implemented | Light Novel Shelf refresh token | Pure HTTP SignalR LongPolling, paginated comics, WebP images |
 | `keiyoushi` | ✅ initial support | extension-dependent | Local JDK 25+, on-demand stdio host, official API 1.6 JARs |
 | `readmoo` | ⏳ planned | Readmoo desktop app | Planned source |
 
-**Browser-assisted sources**: `bookwalker` defaults to local JPG restoration, using the BW helper extension in an ordinary logged-in Chrome/Edge browser. `--bw-mode canvas` and Bilibili need a local debug browser (`--remote-debugging-port=9222 --remote-allow-origins=*`) plus `websocket-client`. These browser modes require a local browser session.
+**Browser-assisted sources**: `bookwalker` defaults to local JPG restoration, using the BW helper extension in an ordinary logged-in Chrome/Edge browser. `--bw-mode canvas` and `--bili-mode canvas` need a local debug browser (`--remote-debugging-port=9222 --remote-allow-origins=*`) plus `websocket-client`. These browser modes require a local browser session. Bilibili defaults to HTTP/WASM and does not need a browser, Node, or Java.
 
 **`kobo` (book track)**: unlike the crawl/capture tracks it fetches the **whole** DRM'd fixed-layout `.kepub`, decrypts it with the Obok scheme (`mmdl/sources/kobo_drm.py`), then extracts pages by OPF spine order (`page_extract.py`). `--source kobo --setup` does a one-time browser-CDP activation (writes `~/.mmdl/kobo.json`, never stores your password). For **Adobe ADE** books (Kobo free samples are often `.acsm`), `--adobe-setup` imports your machine's already-authorized ADE device identity from the registry (`HKCU\Software\Adobe\Adept`), then the tool runs the full ADEPT flow — operator `Auth` → `InitLicenseService` → `Fulfill` → download → decrypt (`kobo_acsm.py` + `adept_drm.py`). Not in Actions.
 
@@ -106,8 +106,12 @@ python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/vie
 # Optional Canvas capture (PNG; needs logged-in debug browser on :9222)
 python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --bw-mode canvas --cbz
 
-# Browser-assisted: Bilibili manga reader URL
-python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>"
+# Bilibili HTTP/WASM: one reader chapter, no browser required
+python -m mmdl --source bilibili --url "https://manga.bilibili.com/mc26731/329893" --cbz
+# Or select chapters by comic ID
+python -m mmdl --source bilibili --title 26731 --chapters 1 --cbz
+# Optional existing Canvas capture
+python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>" --bili-mode canvas --cbz
 
 # Kobo (book track): one-time browser activation, then fetch a book by Kobo content id
 python -m mmdl --source kobo --setup
@@ -192,18 +196,37 @@ Every source exposes the `BaseSource` interface (`sources/base.py`) and normaliz
 responses into a shared `Title → Chapter → Page` model, so downloads, resume, and EPUB export work
 identically. Sources fall into two capability tracks:
 
-**crawl** — pure HTTP, drive the whole pipeline (`mangamillion`, `tongli`, `lightnovel`):
+**crawl** — HTTP, drive the whole pipeline (`mangamillion`, `tongli`, `lightnovel`, `bilibili`):
 1. Resolve `title → chapters → pages` through the platform API
 2. Download each page's bytes — MangaMillion decrypts AES-256-CBC, Tongli fetches Azure SAS links
 3. Optionally package the images into an EPUB 3 archive
 
-**capture** — browser-assisted, need a locally logged-in reader (`bookwalker`, `bilibili`):
+**capture** — optional browser modes (`--bw-mode canvas`, `--bili-mode canvas`):
 1. Connect to your debug browser on `:9222`
 2. Read the manga from the reader's `<canvas>` via cross-realm `toDataURL` (bypasses canvas patching)
 3. Page through the reader slowly (≥1.5s) and extract the raw images
 
 Shared `core/` handles transport, resume, and EPUB packaging; each `sources/*.py` only implements its
 own API calls, field mapping, and image handling.
+
+### Bilibili HTTP mode
+
+`bilibili` defaults to `--bili-mode http`. `--url` accepts a comic or reader URL; a reader URL downloads
+only its chapter. `--title` accepts a comic ID or URL and supports `--chapters`, resume, EPUB, and
+per-chapter ZIP/CBZ export. It does not request popular/recent listings or buy/unlock chapters.
+
+The first HTTP download caches the pinned public reader script and three official WASM modules in
+`~/.mmdl/bilibili`. Python runs these modules through Wasmtime; it does not execute JavaScript or
+start a browser/Node process. ECDH uses the existing cryptography dependency. Signed API responses
+and encrypted image bytes are decoded before saving the original image format and dimensions.
+Optional WASM telemetry is not transmitted.
+
+The current protocol snapshot is reader `550c4c7ca4`. Website protocol changes can require an update.
+The Go callback source bundled beside the host is public protocol metadata, not executable JS.
+HTTP mode currently uses an anonymous session: a complete 22-page free chapter, including four
+encrypted images, was verified. Logged-in/paid chapters have not been verified; the existing Canvas
+mode remains available for the reader session. Account cookies, image tokens, and temporary private
+keys are not stored in the protocol cache.
 
 ## Project structure
 

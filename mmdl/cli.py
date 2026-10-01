@@ -40,6 +40,7 @@ def build_parser():
     ap.add_argument("--url", help="阅读器 URL（如 BookWalker reader）")
     ap.add_argument("--bw-mode", choices=("native", "canvas"), help="BookWalker 下载方式（默认 native 本地还原；canvas 提取已绘制页面）")
     ap.add_argument("--bw-port", type=int, help="BW 辅助扩展连接端口（默认 19225）")
+    ap.add_argument("--bili-mode", choices=("http", "canvas"), help="B 漫下载方式（默认 http；canvas 使用调试浏览器）")
     ap.add_argument("--output", default=None, help="输出目录")
     ap.add_argument("--throttle", type=float, default=0.3, help="单页下载间隔秒数")
     ap.add_argument("--epub", action="store_true", help="下载后打包为 EPUB")
@@ -105,6 +106,10 @@ def _validate(source, args):
 
     if (args.bw_mode is not None or args.bw_port is not None) and source.name != "bookwalker":
         raise SystemExit("[error] --bw-mode/--bw-port 需要 --source bookwalker")
+    if args.bili_mode is not None and source.name != "bilibili":
+        raise SystemExit("[error] --bili-mode 需要 --source bilibili")
+    if source.name == "bilibili" and source.bili_mode == "canvas" and args.title:
+        raise SystemExit("[error] B 漫 canvas 模式需要 --url")
 
     caps = source.capabilities
     if args.setup and not hasattr(source, "setup"):
@@ -136,6 +141,10 @@ def main(argv=None):
 
 
 def _run(source, args):
+    if source.name == "bilibili":
+        source.throttle = args.throttle
+        if args.bili_mode is not None:
+            source.bili_mode = args.bili_mode
     if source.name == "bookwalker":
         source.throttle = args.throttle
         if args.bw_mode is not None:
@@ -192,7 +201,7 @@ def _run(source, args):
     out_dir = args.output or source.default_output
 
     # capture 轨（延后，BookWalker）
-    if args.url:
+    if args.url and not (source.name == "bilibili" and source.bili_mode == "http"):
         result = source.capture_from_url(args.url, lang=args.lang, quality=args.quality)
         _write_capture(source, result, out_dir, args)
         return
@@ -210,9 +219,9 @@ def _run(source, args):
             print(f"  {t.id:>6}  {t.name}  ({t.author})")
         return
 
-    if args.title:
+    if args.title or (args.url and source.name == "bilibili" and source.bili_mode == "http"):
         title_dir, title = download_title(
-            source, args.title, out_dir,
+            source, args.title or args.url, out_dir,
             lang=args.lang, quality=args.quality,
             chapter_range=args.chapters, throttle=args.throttle, epub=args.epub,
         )
