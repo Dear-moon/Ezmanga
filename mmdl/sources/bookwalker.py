@@ -1,17 +1,4 @@
-"""BookWalker (BW) source —— 浏览器辅助方案（capture 轨）。
-
-**已验证机制**（实测）：
-- BW 阅读器用 `.canvas` 渲染（跨页=2 canvas，1289×1398，left=奇数页 right=偶数页）
-- BW **未 patch** toDataURL/getImageData，canvas 未污染 → 跨 realm iframe 原生 toDataURL 直接提取
-- BW 翻页 API 公开暴露：`window.NFBR.a6G.Initializer.T1V.menu.options.a6l`
-  → `moveToPage(n)`（精确跳页）/ `moveToNext()` / `moveToPrevious()`（对象名 T1V 会随版本变,
-  可扫 `NFBR.a6G.Initializer.*.menu` 找非 undefined 的那个）
-
-**参考**：xuzhengyi1995/Manga_downloader 用定制 Chromium 去 taint（绕过安全机制，未采用）；
-本方案用跨 realm 提取，无需定制浏览器。登录态用用户已登录浏览器（CDP 9222）。
-
-**依赖**：websocket-client + 已登录 BW 的浏览器页。进不了 GitHub Actions。
-"""
+"""BookWalker Japan: native Publus image restoration with optional Canvas capture."""
 from mmdl.core.model import Title, Chapter, Page, CaptureResult
 from .base import BaseSource
 
@@ -27,6 +14,8 @@ class BookWalker(BaseSource):
     def __init__(self, throttle=0.0, lang="ja", cdp_url="http://127.0.0.1:9222"):
         super().__init__(throttle=throttle, lang=lang)
         self.cdp_url = cdp_url
+        self.bw_mode = "native"
+        self.bw_port = 19225
 
     def http_config(self):
         raise NotImplementedError("BookWalker is browser-based; no HTTP config.")
@@ -56,13 +45,126 @@ class BookWalker(BaseSource):
 
     # ---- capture 轨 ----
     def capture_from_url(self, url, *, lang=None, quality=None, **kw):
+        if self.bw_mode == "canvas":
+            return self._capture_canvas(url, lang=lang, quality=quality, **kw)
+        return self._capture_native(url)
+
+    def _capture_native(self, url):
+        import time
+        from http.cookiejar import Cookie
+        from http.cookies import SimpleCookie
+        from urllib.parse import parse_qs, urlsplit
+        from urllib.request import Request
+
+        from curl_cffi import requests
+        from .bookwalker_publus import decode_config, image_filename, restore_image
+        from .bookwalker_browser import BrowserBridge
+
+        address = urlsplit(url)
+        viewers = {"viewer.bookwalker.jp", "viewer-trial.bookwalker.jp", "viewer-df.bookwalker.jp"}
+        if address.scheme != "https" or address.hostname not in viewers:
+            raise ValueError("Native BW requires a Japanese BookWalker reader URL; use --bw-mode canvas for other readers")
+        with BrowserBridge(self.bw_port, url) as bridge:
+            snapshot = bridge.session()
+            user_agent = snapshot["userAgent"]
+            with requests.Session(impersonate="chrome", headers={"User-Agent": user_agent, "Referer": url}, timeout=60) as session:
+                def import_cookies():
+                    for item in snapshot["cookies"]:
+                        domain = item["domain"]
+                        expires = item.get("expires", -1)
+                        session.cookies.jar.set_cookie(Cookie(
+                            version=0, name=item["name"], value=item["value"], port=None, port_specified=False,
+                            domain=domain, domain_specified=domain.startswith("."), domain_initial_dot=domain.startswith("."),
+                            path=item["path"], path_specified=True, secure=item["secure"],
+                            expires=int(expires) if expires > 0 else None, discard=expires <= 0,
+                            comment=None, comment_url=None, rest={},
+                        ))
+
+                def get(target_url, params=None):
+                    response = session.get(target_url, params=params)
+                    if response.status_code != 200:
+                        raise RuntimeError(f"BW request failed (HTTP {response.status_code}); refresh the browser reading session")
+                    return response
+
+                import_cookies()
+                reader = get(url)
+                address = urlsplit(reader.url)
+                if address.hostname not in viewers:
+                    raise RuntimeError("BW reader redirected to login; log in and open the reader again")
+                query = parse_qs(address.query)
+                cid = query["cid"][0]
+                if "cty" in query and query["cty"][0] not in ("1", "2"):
+                    raise ValueError("Native BW supports comics, not novels")
+                trial = address.hostname == "viewer-trial.bookwalker.jp"
+                rental = address.hostname == "viewer-df.bookwalker.jp"
+                origin = f"https://{address.hostname}"
+                if trial:
+                    content_api = origin + "/trial-page/c"
+                elif rental:
+                    content_api = origin + "/browserWebApi4/c"
+                else:
+                    content_api = origin + "/browserWebApi/c"
+                parameters = {"cid": cid, "BID": "0"}
+
+                def content():
+                    request = Request(content_api)
+                    session.cookies.jar.add_cookie_header(request)
+                    cookies = SimpleCookie(request.get_header("Cookie", ""))
+                    query = dict(parameters)
+                    if not trial and snapshot["cr"] is not None:
+                        query["cr"] = snapshot["cr"]
+                    for name in ("u1", "u2"):
+                        if name in cookies:
+                            query[name] = cookies[name].value
+                    result = get(content_api, query).json()
+                    if not result.get("url"):
+                        raise RuntimeError("BW content is unavailable; log in and open a purchased, rented or trial volume")
+                    if result.get("cty") not in (1, 2):
+                        raise ValueError("Native BW supports comics, not novels")
+                    info = result.get("auth_info") or {}
+                    fields = ("pfCd", "Policy", "Signature", "Key-Pair-Id")
+                    if not trial:
+                        fields += ("hti", "cfg", "uuid")
+                    auth = {key: info[key] for key in fields if info.get(key) is not None}
+                    if not trial and info:
+                        auth["BID"] = "0"
+                    return result["url"].rstrip("/"), auth
+
+                base, auth = content()
+                renewed = time.monotonic()
+                root = get(base + "/configuration_pack.json", auth).json()
+                config, keys = decode_config(root)
+                entries = sorted(config["configuration"]["contents"], key=lambda item: item["index"])
+                pages = []
+                for index, entry in enumerate(entries, 1):
+                    # Purchased-book signatures expire after 60 seconds.
+                    if not trial and time.monotonic() - renewed >= 45:
+                        snapshot = bridge.session()
+                        import_cookies()
+                        base, auth = content()
+                        renewed = time.monotonic()
+                    page_id = entry["file"]
+                    detail = config[page_id]["FileLinkInfo"]["PageLinkInfoList"][0]["Page"]
+                    image_url = base + "/" + image_filename(page_id, keys, detail.get("No", 0))
+                    data = restore_image(get(image_url, auth).content, page_id, detail, keys)
+                    pages.append(Page(data=data, ext="jpg", mime="image/jpeg"))
+                    print(f"[bw] page {index}/{len(entries)} restored")
+                    if self.throttle:
+                        time.sleep(self.throttle)
+                name = self._guess_name(snapshot["title"])
+                return CaptureResult(
+                    title=Title(source=self.name, id=url, name=name),
+                    chapters=[Chapter(id=url, number="1", name="", pages=pages)],
+                )
+
+    def _capture_canvas(self, url, *, lang=None, quality=None, **kw):
         client = self._cdp()
         try:
             client.connect()
             menu = self._menu(client)
             if not menu:
                 raise RuntimeError("BookWalker reader API not found (NFBR.a6G.Initializer.*.menu)")
-            title_name = self._guess_name(client)
+            title_name = self._guess_name(client.eval("document.title || ''"))
             total = self._total_pages(client)
             pages = self._gather_pages(client, menu, total)
             # Chapter 名不设书名(避免目录嵌套为 书/书/); 让 _write_capture fallback 到 chapter_001
@@ -74,8 +176,7 @@ class BookWalker(BaseSource):
         finally:
             client.close()
 
-    def _guess_name(self, client):
-        val = client.eval("document.title || ''")
+    def _guess_name(self, val):
         if val:
             for sep in (" - ", " -", " | "):
                 if sep in val:

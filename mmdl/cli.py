@@ -37,7 +37,9 @@ def build_parser():
     ap.add_argument("--list", action="store_true", help="列出标题后退出")
     ap.add_argument("--title", help="标题 ID（按 source 语义，如 original_title_id）")
     ap.add_argument("--chapters", type=_parse_chapter_range, help="单章或章节范围，如 1 / 1-20 / 10.5-12.5")
-    ap.add_argument("--url", help="capture 模式 URL（如 BookWalker reader，延后）")
+    ap.add_argument("--url", help="阅读器 URL（如 BookWalker reader）")
+    ap.add_argument("--bw-mode", choices=("native", "canvas"), help="BookWalker 下载方式（默认 native 本地还原；canvas 提取已绘制页面）")
+    ap.add_argument("--bw-port", type=int, help="BW 辅助扩展连接端口（默认 19225）")
     ap.add_argument("--output", default=None, help="输出目录")
     ap.add_argument("--throttle", type=float, default=0.3, help="单页下载间隔秒数")
     ap.add_argument("--epub", action="store_true", help="下载后打包为 EPUB")
@@ -101,6 +103,9 @@ def _validate(source, args):
                                  or args.epub_only or args.zip_only or args.cbz_only):
         raise SystemExit("[error] 设置导入不能与安装、初始化或离线导出同时使用")
 
+    if (args.bw_mode is not None or args.bw_port is not None) and source.name != "bookwalker":
+        raise SystemExit("[error] --bw-mode/--bw-port 需要 --source bookwalker")
+
     caps = source.capabilities
     if args.setup and not hasattr(source, "setup"):
         raise SystemExit(f"[error] {source.name} 不支持 --setup")
@@ -131,6 +136,12 @@ def main(argv=None):
 
 
 def _run(source, args):
+    if source.name == "bookwalker":
+        source.throttle = args.throttle
+        if args.bw_mode is not None:
+            source.bw_mode = args.bw_mode
+        if args.bw_port is not None:
+            source.bw_port = args.bw_port
     if source.name == "keiyoushi":
         source.extension = args.extension
         source.extension_source = args.extension_source

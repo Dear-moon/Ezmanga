@@ -1,0 +1,8 @@
+:root { color-scheme: light dark; font: 16px system-ui, sans-serif; }
+body { margin: 0; }
+main { max-width: 480px; margin: 64px auto; padding: 24px; }
+h1 { font-size: 24px; }
+label { display: block; margin: 20px 0; }
+input { display: block; box-sizing: border-box; width: 100%; margin-top: 8px; padding: 10px; font: inherit; }
+button { padding: 10px 20px; font: inherit; cursor: pointer; }
+.note { opacity: .7; font-size: 14px; }

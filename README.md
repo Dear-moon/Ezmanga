@@ -23,14 +23,14 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 |--------|--------|------|-------|
 | `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
 | `tongli` | ✅ implemented | auto login (`refreshToken`) | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
-| `bookwalker` | ✅ implemented | logged-in browser | Browser-assisted; needs a local debug Chrome (`--remote-debugging-port`), **not** in Actions |
+| `bookwalker` | ✅ implemented | logged-in browser | Native JPG restoration with ordinary-browser BW helper; optional debug-browser Canvas capture; not in Actions |
 | `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
 | `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `lightnovel` | ✅ implemented | Light Novel Shelf refresh token | Pure HTTP SignalR LongPolling, paginated comics, WebP images |
 | `keiyoushi` | ✅ initial support | extension-dependent | Local JDK 25+, on-demand stdio host, official API 1.6 JARs |
 | `readmoo` | ⏳ planned | Readmoo desktop app | Planned source |
 
-**Browser-assisted sources** (`bookwalker`, `bilibili`) read the manga from the reader's `<canvas>` (cross-realm `toDataURL` to bypass canvas read-back patching) instead of the HTTP API. This requires your locally logged-in browser started with `--remote-debugging-port=9222 --remote-allow-origins=*`. They can't run in GitHub Actions (no login session there) and need `pip install websocket-client`.
+**Browser-assisted sources**: `bookwalker` defaults to local JPG restoration, using the BW helper extension in an ordinary logged-in Chrome/Edge browser. `--bw-mode canvas` and Bilibili need a local debug browser (`--remote-debugging-port=9222 --remote-allow-origins=*`) plus `websocket-client`. These browser modes require a local browser session.
 
 **`kobo` (book track)**: unlike the crawl/capture tracks it fetches the **whole** DRM'd fixed-layout `.kepub`, decrypts it with the Obok scheme (`mmdl/sources/kobo_drm.py`), then extracts pages by OPF spine order (`page_extract.py`). `--source kobo --setup` does a one-time browser-CDP activation (writes `~/.mmdl/kobo.json`, never stores your password). For **Adobe ADE** books (Kobo free samples are often `.acsm`), `--adobe-setup` imports your machine's already-authorized ADE device identity from the registry (`HKCU\Software\Adobe\Adept`), then the tool runs the full ADEPT flow — operator `Auth` → `InitLicenseService` → `Fulfill` → download → decrypt (`kobo_acsm.py` + `adept_drm.py`). Not in Actions.
 
@@ -101,8 +101,10 @@ python -m mmdl --source tongli --title <volume-guid> --lang zh-TW
 # or pin a static token to skip auto-login:
 python -m mmdl --source tongli --title <volume-guid> --lang zh-TW --token "$TONG_LI_TOKEN"
 
-# Browser-assisted: BookWalker reader URL (needs logged-in browser on :9222)
-python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1"
+# BookWalker native: ordinary logged-in browser with the BW helper extension
+python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --cbz
+# Optional Canvas capture (PNG; needs logged-in debug browser on :9222)
+python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --bw-mode canvas --cbz
 
 # Browser-assisted: Bilibili manga reader URL
 python -m mmdl --source bilibili --url "<manga-bilibili-reader-url>"
@@ -334,6 +336,48 @@ and Android compatibility updates remain host maintenance responsibilities.
 use the extension's chapter numbers. Downloaded pages are written to temporary files
 and moved into place only when complete, so interrupted writes are retried on resume. See
 [runtime/THIRD_PARTY.md](runtime/THIRD_PARTY.md) for version and license information.
+
+## BookWalker Japan download modes
+
+The existing `--source bookwalker --url <reader-url>` command defaults to `--bw-mode native`.
+It restores page resources locally to JPG. Native downloads use your ordinary logged-in
+Chrome/Edge browser through the helper extension in [browser/bookwalker](browser/bookwalker).
+They do not require a debugging port, a separate browser profile, or Java.
+
+One-time setup: open `chrome://extensions` or `edge://extensions`, enable developer mode,
+choose **Load unpacked**, and select the `browser/bookwalker` directory. This developer-mode
+switch installs the local extension; it does not enable browser remote debugging.
+
+For each download:
+
+1. Open the requested BW manga reader in your already logged-in browser, then click the
+   **Ezmanga BW** extension to open its connection page.
+2. Run `python -m mmdl --source bookwalker --url "<reader-url>" --cbz`.
+3. Paste the command's pairing code into the connection page and click **Connect**.
+4. Keep the reader and connection tabs open until the download finishes.
+
+The helper reads cookies applicable to the selected BW reader/API and runs the website's
+authorization script in that reader tab. It sends updated sessions every 20 seconds to a
+temporary receiver bound to `127.0.0.1`. The receiver closes with the download. Session data
+and the generated per-download pairing code stay in memory. The helper verifies the receiver
+before sending cookies. The receiver accepts only the requested reader and paired client.
+If the default port is occupied, use `--bw-port <port>` and enter that port in the helper.
+
+Python fetches and decodes the Publus configuration, restores image tiles with Pillow,
+and refreshes short-lived reading authorization during downloads. The native implementation
+covers `viewer.bookwalker.jp`, `viewer-trial.bookwalker.jp`, and `viewer-df.bookwalker.jp`.
+The account must have access to the volume. English BookWalker uses a different reader
+protocol and is not covered here. Native downloads do not turn pages or extract Canvas pixels.
+
+Use `--bw-mode canvas` to select the existing browser-rendered PNG capture explicitly.
+That mode still needs your logged-in debug browser and `websocket-client`.
+Native errors do not silently switch modes. Both modes support `--epub`, `--zip`, and `--cbz`.
+Native restoration uses the already declared `curl_cffi`, `pycryptodome`, and Pillow dependencies.
+Scrambled pages are encoded as JPEG at quality 90; unmodified JPEG pages keep their bytes.
+
+The Python Publus decoder is adapted from the
+[Keiyoushi Publus library](https://github.com/keiyoushi/extensions-source/tree/main/lib/publus).
+Its adapted code is covered by [Apache-2.0](mmdl/sources/BOOKWALKER_LICENSE.txt).
 
 ## License
 
