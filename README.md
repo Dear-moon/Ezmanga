@@ -12,7 +12,7 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 ## Features
 
 - Pluggable **source** architecture — swap platforms with `--source`
-- List all available titles, download a full series or a chapter range
+- List available titles (Keiyoushi lists/searches one page at a time), download a full series or a chapter range
 - Resume interrupted downloads (skip already-downloaded pages and complete chapters)
 - Bundle downloaded chapters into an `.epub`, or export each chapter/volume as `.zip` / `.cbz`
 - No login required for the default source
@@ -27,6 +27,7 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `bilibili` | ✅ implemented | logged-in browser | Browser-assisted; canvas extraction, risk-controlled, **not** in Actions |
 | `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `lightnovel` | ✅ implemented | Light Novel Shelf refresh token | Pure HTTP SignalR LongPolling, paginated comics, WebP images |
+| `keiyoushi` | ✅ initial support | extension-dependent | Local JDK 25+, on-demand stdio host, official API 1.6 JARs |
 | `readmoo` | ⏳ planned | Readmoo desktop app | Planned source |
 
 **Browser-assisted sources** (`bookwalker`, `bilibili`) read the manga from the reader's `<canvas>` (cross-realm `toDataURL` to bypass canvas read-back patching) instead of the HTTP API. This requires your locally logged-in browser started with `--remote-debugging-port=9222 --remote-allow-origins=*`. They can't run in GitHub Actions (no login session there) and need `pip install websocket-client`.
@@ -44,6 +45,7 @@ All sources emit the same normalized `Title → Chapter → Page` model, so down
 - Python 3.8+
 - [`pycryptodome`](https://pypi.org/project/pycryptodome/)
 - Light Novel Shelf: `curl_cffi` and `msgpack` (included in `requirements.txt`; loaded only for this source)
+- Keiyoushi (optional): local JDK 25+, `curl_cffi` for extension installation, and Pillow 11.3+ for AVIF conversion
 
 Install dependencies:
 
@@ -153,7 +155,7 @@ Original images are retained. Re-exporting replaces archives with the same chapt
 | `--list` | List all titles, then exit |
 | `--title <id>` | Title ID for the selected source |
 | `--lang <code>` | Language: `en` / `ja` / `zh-CN` / ... |
-| `--chapters <a-b>` | Download only this chapter range |
+| `--chapters <n or a-b>` | Download one chapter or a range, including fractional chapters such as `10.5-12.5` |
 | `--output <dir>` | Output directory (default `manga_million`) |
 | `--quality <q>` | Image quality: `middle` / `low` |
 | `--throttle <sec>` | Delay between page downloads (default `0.3`) |
@@ -209,6 +211,129 @@ mmdl/
   sources/     # base.BaseSource + one module per platform
 cli.py         # --source routing & capability gating
 ```
+
+## Keiyoushi extensions (optional)
+
+Ezmanga starts its own Java stdio host for the selected extension and closes it when the command
+finishes. It does not start a Suwayomi server, HTTP listener, database, or WebUI. Images are fetched
+through the extension's client, preserving headers, cookies, and image processing.
+
+Use a local **JDK 25+** (`JAVA_HOME`, or `java` and `javac` on PATH). Setup downloads a pinned
+24.8 MiB compatibility library and compiles the small host with `javac`; no Gradle or Android SDK
+is required. The host accepts official **extension API 1.4–1.6 JARs** and HTTP image sources.
+API 1.6 downloads have been verified. API 1.4/1.5 packages use a dedicated legacy Rx
+adapter for search, details, chapter lists, page lists, and image URL resolution.
+Details finish before chapter requests; original extension models and clients are retained.
+The host calls chapter preparation hooks, recognizes missing chapter numbers with the shared
+runtime parser, and uses legacy image hooks when provided. Legacy settings are written
+synchronously to the extension's own preferences, including private or lazily accessed stores.
+Compilation and local integration tests using the official vomic API 1.4 JAR passed,
+including settings persistence, search, downloads, resume, and ZIP/CBZ/EPUB export.
+Successful downloads from public API 1.4 websites have not yet been confirmed.
+Compatibility depends on each extension and website.
+
+```bash
+python -m mmdl --source keiyoushi --setup
+python -m mmdl --source keiyoushi --extensions --search xkcd
+python -m mmdl --source keiyoushi --install-extension xkcd
+python -m mmdl --source keiyoushi --installed-extensions
+python -m mmdl --source keiyoushi --extension xkcd --extension-sources
+python -m mmdl --source keiyoushi --install-extension mangamillion
+python -m mmdl --source keiyoushi --extension mangamillion --lang en --search "One Piece"
+python -m mmdl --source keiyoushi --extension xkcd --lang en --title '<ID or URL from search>' --chapters 1-1 --cbz
+python -m mmdl --source keiyoushi --update-extensions
+```
+
+`--extension` accepts the full package name or its last component. For multiple sources in the
+same language, use `--extension-source <ID>` from `--extension-sources`. Searches show one page; use `--page` for the next page.
+Keiyoushi provides search to locate a download ID; popular and recent-update browsing are not exposed. `--installed-extensions` lists local packages
+without a network request, and supports `--lang` and `--search` filters. Updates are explicit; only installed extensions update,
+and adding `--extension` limits the update to one package. Official JAR checksums are verified
+at installation and before loading.
+
+Runtime files, extensions, and preferences live under `~/.mmdl/keiyoushi/`. Override this with
+`EZMANGA_KEIYOUSHI_HOME`; `EZMANGA_JAVA` and `EZMANGA_JAVAC` can select local Java executables.
+Credentials belong in user configuration, never project files. This host currently supports
+JPEG, PNG, WebP, and GIF (including animation); static AVIF pages are converted losslessly to PNG using Pillow 11.3+.
+Extensions requiring Android WebView, native Android libraries, or interactive
+login may need further compatibility work; compatibility is not guaranteed for every source.
+
+To inspect source settings without displaying saved values:
+
+```bash
+python -m mmdl --source keiyoushi --extension xkcd --lang en --source-preferences
+python -m mmdl --source keiyoushi --extension xkcd --lang en --preferences-file private-settings.json
+python -m mmdl --source keiyoushi --extension manhuagui --source-filters
+python -m mmdl --source keiyoushi --extension manhuagui --search "" --filters-file filters.json
+```
+
+`private-settings.json` uses the extension's setting keys and explicit value types:
+
+```json
+{"preferences": [{"key": "organization_method", "type": "String", "value": "BY_YEAR"}]}
+```
+
+Supported setting types are `String`, `Boolean`, `Int`, `Long`, `Float`, and `StringSet`.
+Keep files containing credentials outside the repository. Settings persist between commands;
+the host restarts after changing them so cached authentication headers are refreshed.
+Some extensions require a configured website or server URL before listing titles.
+
+Account login is supported through the native [Picacomic](https://github.com/keiyoushi/extensions-source/tree/main/src/zh/picacomic)
+and [Zaimanhua](https://github.com/keiyoushi/extensions-source/tree/main/src/zh/zaimanhua) extensions.
+Install either extension, then import its account settings from a private JSON file:
+
+```bash
+python -m mmdl --source keiyoushi --install-extension picacomic
+python -m mmdl --source keiyoushi --install-extension zaimanhua
+python -m mmdl --source keiyoushi --extension picacomic --preferences-file private-picacomic.json
+python -m mmdl --source keiyoushi --extension zaimanhua --preferences-file private-zaimanhua.json
+```
+
+Both files use the same account keys. Replace the placeholders with your own credentials:
+
+```json
+{
+  "preferences": [
+    {"key": "USERNAME", "type": "String", "value": "<username>"},
+    {"key": "PASSWORD", "type": "String", "value": "<password>"},
+    {"key": "TOKEN", "type": "String", "value": ""}
+  ]
+}
+```
+
+An empty `TOKEN` clears an old session. The extension logs in on the next request and saves
+the resulting token. To import an existing session instead, use only a `TOKEN` entry with
+its raw value; do not include the `Bearer ` prefix. Picacomic refreshes rejected tokens
+using the saved account. Zaimanhua also clears its token when account settings change;
+native setting callbacks run before any explicitly supplied token is saved.
+
+Search for a title, then copy its ID from the results into the download command:
+
+```bash
+python -m mmdl --source keiyoushi --extension picacomic --search "<title>"
+python -m mmdl --source keiyoushi --extension picacomic --title "<ID from search>" --chapters 1 --cbz
+python -m mmdl --source keiyoushi --extension zaimanhua --search "<title>"
+python -m mmdl --source keiyoushi --extension zaimanhua --title "<ID from search>" --chapters 1 --cbz
+```
+
+Authentication stays in the extension; the downloader does not maintain separate login APIs.
+These two extensions use account/token authentication. Cookie-file import is not implemented.
+
+`--source-filters` shows filter paths, types, choices, and states. A filters file maps those
+paths to new states, for example `{"0": 1, "2.0": true}`; choose paths from the selected
+extension's output. Select filters use a zero-based choice index, text filters a string,
+checkboxes a boolean, and tri-state filters `0`, `1`, or `2`. Sort filters accept
+`{"index": 0, "ascending": true}` or `null`. Group children use dotted paths.
+Filters apply only to searches; an empty search string requests the source's filtered catalog.
+
+The host uses the independently published
+[Suwayomi-ext-runtime](https://github.com/576576/Suwayomi-ext-runtime) as a compatibility **library**;
+its HTTP process entry point is never invoked. The pinned artifact is an alpha release. Source API
+and Android compatibility updates remain host maintenance responsibilities.
+`--chapters 1` selects only chapter 1; fractional ranges such as `--chapters 10.5-12.5`
+use the extension's chapter numbers. Downloaded pages are written to temporary files
+and moved into place only when complete, so interrupted writes are retried on resume. See
+[runtime/THIRD_PARTY.md](runtime/THIRD_PARTY.md) for version and license information.
 
 ## License
 

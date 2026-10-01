@@ -2,3 +2,5 @@ pycryptodome==3.23.0
 cryptography>=43.0
 curl_cffi>=0.7.0
 msgpack>=1.0.0
+
+Pillow>=11.3.0

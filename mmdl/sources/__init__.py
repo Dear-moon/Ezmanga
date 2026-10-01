@@ -5,6 +5,7 @@ from . import bookwalker
 from . import bilibili
 from . import kobo
 from . import lightnovel
+from . import keiyoushi
 
 SOURCES = {
     "mangamillion": mangamillion.MCMillion,
@@ -13,6 +14,7 @@ SOURCES = {
     "bilibili": bilibili.Bilibili,
     "kobo": kobo.Kobo,
     "lightnovel": lightnovel.Lightnovel,
+    "keiyoushi": keiyoushi.Keiyoushi,
 }
 
 

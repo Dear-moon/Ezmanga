@@ -7,6 +7,8 @@ venv/
 
 # Download output
 /manga_million/
+/runtime/build/
+/runtime/*.jar
 
 # macOS
 .DS_Store

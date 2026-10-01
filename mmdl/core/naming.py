@@ -1,4 +1,5 @@
 """文件名规范化工具。"""
+from decimal import Decimal
 import re
 
 
@@ -14,6 +15,12 @@ def natural_sort_key(value):
 
 
 def _num(s):
-    """从字符串抽第一个数字，无则 0。"""
-    m = re.search(r"\d+", s)
-    return int(m.group()) if m else 0
+    """Extract a chapter number without truncating fractional chapters."""
+    try:
+        value = Decimal(str(s).strip())
+        if value.is_finite():
+            return value
+    except ArithmeticError:
+        pass
+    match = re.search(r"[0-9]+(?:\.[0-9]+)?", str(s))
+    return Decimal(match.group()) if match else Decimal(0)

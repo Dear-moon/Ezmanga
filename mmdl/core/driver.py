@@ -4,11 +4,25 @@ crawl 轨的 download_title 与 capture 轨的 capture_url（延后）都复用 
 """
 import os
 import time
+import tempfile
 from pathlib import Path
 
 from .epub import build_epub
 from .naming import clean_name, _num
 from .resume import page_already_downloaded, chapter_already_downloaded
+
+
+def _write_page(path, data):
+    temporary = None
+    try:
+        # Interrupted writes must not become resumable pages.
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".mmdl-", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(data)
+        temporary.replace(path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def save_captured_chapter(ch_dir, pages):
@@ -113,11 +127,13 @@ def download_title(source, title_id, out_dir, *, lang=None, quality=None,
         for pno, page in enumerate(pages, 1):
             ext = page.ext or "webp"
             fname = ch_dir / f"{pno:03d}.{ext}"
-            if page_already_downloaded(fname):
+            extensions = getattr(source, "page_extensions", (ext,))
+            if any(page_already_downloaded(ch_dir / f"{pno:03d}.{candidate}") for candidate in extensions):
                 continue
             data = source.download_page(page, ch, lang=lang, quality=quality, client=client)
             if data:
-                fname.write_bytes(data)
+                fname = ch_dir / f"{pno:03d}.{page.ext or ext}"
+                _write_page(fname, data)
             else:
                 print(f"    [fail] page {pno}")
             time.sleep(throttle)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .naming import natural_sort_key
 
-IMG_EXTS = {".webp", ".jpg", ".jpeg", ".png"}
+IMG_EXTS = {".webp", ".jpg", ".jpeg", ".png", ".gif"}
 
 
 def _epub_href(value):
