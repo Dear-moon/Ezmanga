@@ -1,13 +1,13 @@
-"""Adobe .acsm 兑现（ADEPT）—— 把 .acsm 兑换成带 DRM 的 epub，再交 adept_drm 解密。
+"""Adobe .acsm fulfillment (ADEPT) — redeem .acsm into a DRM'd epub, then hand it to adept_drm for decryption.
 
-从 DeDRM_tools（GPL）libadobeFulfill/fulfill 协议**算法独立重写**为 MIT，复用 adobe_crypto（签名）、
-adept_drm（内容解密）、adobe_auth 的激活态。解用户凭证 pkcs12 需 `cryptography`（requirements 已加）。
+Independently rewritten as MIT from the DeDRM_tools (GPL) libadobeFulfill/fulfill protocol, reusing adobe_crypto (signing),
+adept_drm (content decryption) and the adobe_auth activation state. Parsing user pkcs12 credentials needs `cryptography` (already in requirements).
 
-流程：parse_acsm → 签 fulfill 请求(用户私钥) → operatorAuth(Auth) → POST /Fulfill
-→ fulfillmentResult(src/licenseToken) → fetchLicenseService → buildRights → download(src)
-→ 带 rights.xml 的 epub → adept_drm.decrypt_epub。
+Flow: parse_acsm → sign fulfill request (user private key) → operatorAuth (Auth) → POST /Fulfill
+→ fulfillmentResult (src/licenseToken) → fetchLicenseService → buildRights → download(src)
+→ epub with rights.xml → adept_drm.decrypt_epub.
 
-⚠️ 报文构造可本地单测（build_auth/build_fulfill/build_rights）；**完整链路需连 operator/Adobe 实测**。
+⚠️ Message construction is locally unit-testable (build_auth/build_fulfill/build_rights); the full chain needs live operator/Adobe testing.
 """
 import base64
 import io
@@ -48,7 +48,7 @@ def _text(node, *tags):
 
 
 def parse_acsm(acsm_bytes) -> dict:
-    """解析 .acsm → dict（operatorURL/transaction/resource/书名）。"""
+    """Parse .acsm → dict (operatorURL/transaction/resource/title)."""
     root = ET.fromstring(acsm_bytes)
     title = ""
     for el in root.iter():
@@ -63,15 +63,15 @@ def parse_acsm(acsm_bytes) -> dict:
     }
 
 
-# ---- 用户凭证 ----
+# ---- user credentials ----
 def load_user_credentials(account_dir):
-    """activation.xml 的 credentials/pkcs12（devkey 解）→ (priv_der, cert_der)。cryptography 解 pkcs12。"""
+    """activation.xml credentials/pkcs12 (devkey-decrypted) → (priv_der, cert_der). cryptography parses pkcs12."""
     act = ET.fromstring(_read_text(account_dir, "activation.xml"))
     p12 = act.find(f".//{_ad('credentials')}/{_ad('pkcs12')}")
     if p12 is None or not p12.text:
         raise RuntimeError("adobe: activation.xml 无 credentials/pkcs12")
     devsalt = (Path(account_dir) / "devicesalt").read_bytes()
-    # pkcs12 密码 = base64(devsalt)（libadobe: parse_pkcs12(pkcs12, b64encode(devkey))），非 raw devsalt
+    # pkcs12 password = base64(devsalt) (libadobe: parse_pkcs12(pkcs12, b64encode(devkey))), not raw devsalt
     loaded = _pkcs12.load_pkcs12(base64.b64decode(p12.text), base64.b64encode(devsalt))
     priv_der = loaded.key.private_bytes(serialization.Encoding.DER, serialization.PrivateFormat.PKCS8,
                                         serialization.NoEncryption())
@@ -79,7 +79,7 @@ def load_user_credentials(account_dir):
 
 
 def export_user_key(account_dir) -> bytes:
-    """activation.xml 的 credentials/privateLicenseKey 剥 26B PKCS#8 头 → 用户 RSA 私钥（供 adept_drm 解密）。"""
+    """activation.xml credentials/privateLicenseKey, strip 26B PKCS#8 header → user RSA private key (for adept_drm decryption)."""
     act = ET.fromstring(_read_text(account_dir, "activation.xml"))
     elem = act.find(f".//{_ad('credentials')}/{_ad('privateLicenseKey')}")
     if elem is None:
@@ -87,7 +87,7 @@ def export_user_key(account_dir) -> bytes:
     return base64.b64decode(elem.text)[26:]
 
 
-# ---- 报文构造（可本地单测）----
+# ---- message construction (locally unit-testable) ----
 def build_auth_request(account_dir, cert_der) -> str:
     act = ET.fromstring(_read_text(account_dir, "activation.xml"))
     user = act.findtext(f".//{_ad('credentials')}/{_ad('user')}")
@@ -137,7 +137,7 @@ def build_fulfill_request(account_dir, acsm_root) -> str:
 
 
 def build_init_license_service_request(account_dir, operator_url, priv_der) -> str:
-    """<adept:licenseServiceRequest> 报文，供 operator Auth 后 InitLicenseService。"""
+    """<adept:licenseServiceRequest> message for InitLicenseService after operator Auth."""
     act = ET.fromstring(_read_text(account_dir, "activation.xml"))
     user = act.findtext(f".//{_ad('credentials')}/{_ad('user')}")
     nonce, exp = add_nonce()
@@ -176,18 +176,18 @@ def build_rights(license_token_node, account_dir) -> str:
 
 
 class FulfillError(RuntimeError):
-    """兑现失败（网络/服务器/协议）。"""
+    """Fulfillment failure (network/server/protocol)."""
 
 
 def fulfill_acsm(account_dir, acsm_bytes) -> tuple[bytes, dict, str]:
-    """兑现 .acsm → (带 rights.xml 的加密 epub 字节, meta, resource_id)。需连 operator/Adobe 实测。"""
+    """Fulfill .acsm → (encrypted epub bytes with rights.xml, meta, resource_id). Needs live operator/Adobe testing."""
     meta = parse_acsm(acsm_bytes)
     acsm_root = ET.fromstring(acsm_bytes)
     priv_der, cert_der = load_user_credentials(account_dir)
 
     op_url = meta["operatorURL"]
-    # operatorAuth = doOperatorAuth（libgourou）：POST Auth + POST InitLicenseService
-    auth_url = op_url[:-1] if op_url.endswith("/Fulfill") else op_url   # libgourou: 去尾部 /Fulfill
+    # operatorAuth = doOperatorAuth (libgourou): POST Auth + POST InitLicenseService
+    auth_url = op_url[:-1] if op_url.endswith("/Fulfill") else op_url   # libgourou: strip trailing /Fulfill
     ah, ap = split_url(auth_url + "/Auth")
     req = build_auth_request(account_dir, cert_der)
     st, body = _http().request(ah, "POST", ap, body=req.encode("utf-8"),
@@ -195,7 +195,7 @@ def fulfill_acsm(account_dir, acsm_bytes) -> tuple[bytes, dict, str]:
     if not (st == 200 and b"<success" in body):
         raise FulfillError(f"adobe operator Auth HTTP {st}: {body.decode('utf-8','ignore')[:200]}")
 
-    # InitLicenseService（建立 license 服务认证，E_ADEPT_USER_AUTH 的关键）
+    # InitLicenseService (establishes license service auth; key to E_ADEPT_USER_AUTH)
     act = ET.fromstring(_read_text(account_dir, "activation.xml"))
     activation_url = act.findtext(f".//{_ad('activationServiceInfo')}/{_ad('activationURL')}")
     if activation_url:
@@ -206,7 +206,7 @@ def fulfill_acsm(account_dir, acsm_bytes) -> tuple[bytes, dict, str]:
         if not (st3 == 200 and b"<success" in body3):
             raise FulfillError(f"adobe InitLicenseService HTTP {st3}: {body3.decode('utf-8','ignore')[:200]}")
 
-    # 签名 + POST /Fulfill
+    # sign + POST /Fulfill
     fulfill_req = build_fulfill_request(account_dir, acsm_root)
     node = ET.fromstring(fulfill_req)
     sig = sign_node(node, priv_der)
@@ -226,7 +226,7 @@ def fulfill_acsm(account_dir, acsm_bytes) -> tuple[bytes, dict, str]:
         raise FulfillError("adobe fulfill 响应缺 licenseToken")
     lic_url = _text(lic_tok, "licenseURL")
 
-    # 下载 → 写 rights.xml → 返回
+    # download → write rights.xml → return
     epub = _download(src)
     rights = build_rights(lic_tok, account_dir)
     buf = io.BytesIO()

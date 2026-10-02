@@ -1,11 +1,11 @@
-"""Kobo 漫画源 —— `book` 能力轨：整本下载 → Obok 解密 → 按 spine 抽页图。
+"""Kobo manga source — `book` capability track: whole-book download → Obok decrypt → per-spine page extraction.
 
-与前两轨不同，它不逐页走 HTTP 或浏览器 canvas，而是把整本带 DRM 的固定版式 .kepub
-下载下来，解密成明文 epub，再抽出页图。产物是 CaptureResult（与 BookWalker capture 轨同构），
-由 cli._write_capture 统一落盘 + 打包。
+Unlike the other tracks it downloads the DRM'd fixed-layout .kepub, decrypts to plaintext epub,
+then extracts page images; output is a CaptureResult (same shape as the BookWalker capture track),
+persisted/packed by cli._write_capture.
 
-鉴权用 `book` 源专用的激活流程（kobo_api），需要本地 debug 浏览器一次性登录；下载/解密/抽页
-其余部分只依赖 .kepub 本身。进不了 GitHub Actions（无本地登录态 + 需真实漫画校验端点参数）。
+Auth uses the `book`-only activation flow (kobo_api), requiring a one-time local debug-browser login;
+download/decrypt/extract depend only on the .kepub itself. Cannot run in GitHub Actions (no local login state + needs real manga to calibrate endpoint params).
 """
 from pathlib import Path
 
@@ -31,22 +31,22 @@ class Kobo(BaseSource):
         super().__init__(throttle=throttle, lang=lang)
         self.cdp_url = cdp_url
         self.cred_file = cred_file or kobo_api.CRED_FILE
-        self.adobe_account_dir = Path.home() / ".mmdl" / "adobe"   # anonymous(Adobe) 激活态
+        self.adobe_account_dir = Path.home() / ".mmdl" / "adobe"   # anonymous (Adobe) activation state
 
     def http_config(self):
         raise NotImplementedError(f"{self.name} is a book source; HTTP handled by kobo_api.")
 
     def setup(self, cdp_url=None, **kw):
-        """一次性激活：CDP 登录 Kobo → 设备注册 → 存 token 到 ~/.mmdl/kobo.json。"""
+        """One-time activation: CDP login to Kobo → device registration → tokens saved to ~/.mmdl/kobo.json."""
         tokens = kobo_api.setup(cdp_url or self.cdp_url, path=self.cred_file)
         print(f"[kobo] activated: deviceId={tokens.get('deviceId', '')!r}")
         return tokens
 
     def adobe_setup(self, **kw):
-        """导入本机已授权的 ADE 身份到 ~/.mmdl/adobe（.acsm 兑现前置）。
+        """Import the locally authorized ADE identity into ~/.mmdl/adobe (prerequisite for .acsm fulfillment).
 
-        走 adobe_import（注册表+DPAPI+CPUID 解 master_key）；ADE 已验证的绑定才能过 Adobe 签名。
-        anonymous 激活(adobe_auth.activate_anonymous)会卡 E_AUTH_USER_AUTH，不推荐。
+        Uses adobe_import (registry + DPAPI + CPUID to recover master_key); only an ADE-verified binding
+        passes Adobe signature checks. anonymous activation (adobe_auth.activate_anonymous) stalls at E_AUTH_USER_AUTH — not recommended.
         """
         from . import adobe_import
         info = adobe_import.import_ade_activation(str(self.adobe_account_dir))
@@ -54,9 +54,9 @@ class Kobo(BaseSource):
         return info
 
     def get_book(self, book_id, *, lang=None, quality=None, **kw) -> CaptureResult:
-        """双轨：`.acsm`（Adobe ADE）→ ADEPT 兑现+解密；Kobo content-id（`.kepub`）→ Obok。
+        """Dual track: `.acsm` (Adobe ADE) → ADEPT fulfillment + decrypt; Kobo content-id (`.kepub`) → Obok.
 
-        按 id 后缀分流：`.acsm` 走 _get_acsm，其余按 content-id 走 _get_kepub。
+        Dispatch by id suffix: `.acsm` goes to _get_acsm, everything else to _get_kepub by content-id.
         """
         if str(book_id).lower().endswith(".acsm"):
             return self._get_acsm(book_id)

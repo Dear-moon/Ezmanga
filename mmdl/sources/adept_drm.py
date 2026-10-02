@@ -1,14 +1,14 @@
-"""内联 Adobe ADEPT 电子书内容解密（AES-128-CBC 连续流 + RSA PKCS#1 v1.5 解 bookkey）。
+"""Inline Adobe ADEPT ebook content decryption (AES-128-CBC continuous stream + RSA PKCS#1 v1.5 bookkey unwrap).
 
-pure 本地算法，不依赖 DeDRM_tools（其 GPL，本文为 MIT 独立重写，按 ADEPT 公开机制）。
+Pure local algorithm, no DeDRM_tools dependency (that one is GPL; MIT reimplementation of the public ADEPT mechanism).
 
-ADEPT 加密 epub 要点（对照 ineptepub 算法）：
-- META-INF/rights.xml 的 adept:encryptedKey（base64）用账号 RSA 私钥 PKCS1_v1_5 解出 16B bookkey。
-- META-INF/encryption.xml 标记加密条目（aes128-cbc / aes128-cbc-uncompressed）。
-- 所有加密条目共享**同一个 AES-128-CBC 对象**（跨文件保持 CBC 链状态），解密时
-  每文件「解密整串 → 丢弃首 16B 块 → 去 PKCS7 → raw deflate(-15) 解压」。
+ADEPT-encrypted epub essentials (mirrors ineptepub):
+- META-INF/rights.xml adept:encryptedKey (base64) unwraps to the 16B bookkey via the account RSA private key with PKCS1_v1_5.
+- META-INF/encryption.xml marks encrypted entries (aes128-cbc / aes128-cbc-uncompressed).
+- All encrypted entries share one AES-128-CBC object (CBC chain state persists across files); per file: decrypt whole
+  string, drop the first 16B block, unpad PKCS7, then raw inflate(-15).
 
-输出重建 zip：mimetype stored、未加密条目原样、已移除的 encryption.xml 条目剔除。
+Output zip rebuilt: mimetype stored, unencrypted entries verbatim, removed encryption.xml entries dropped.
 """
 import base64
 import io
@@ -54,7 +54,7 @@ def _deflate_raw(data):
 
 
 def _remove_hardening(rights, keytype, keydata):
-    """RMSDK>=10 'hardened' ADEPT：derive kek from keyType, 用 resource/device/fulfillment uuid 做 IV。"""
+    """RMSDK>=10 'hardened' ADEPT: derive kek from keyType, IV from resource/device/fulfillment uuids."""
     text = lambda name: rights.findtext(".//%s" % _ad(name)) or ""
     import hashlib
     from uuid import UUID
@@ -69,14 +69,14 @@ def _remove_hardening(rights, keytype, keydata):
 
 
 class Decryptor:
-    """按 encryption.xml 标记逐条解密（共享 AES-128-CBC 连续流）。"""
+    """Decrypt entry by entry per encryption.xml markers (shared AES-128-CBC continuous stream)."""
 
     def __init__(self, bookkey, encryption: bytes):
         self._aes = AES.new(bookkey, AES.MODE_CBC, b"\x00" * 16)
         self._encryption = encryption
-        self._encrypted = set()      # 加密且需解压的条目（bytes key）
-        self._no_decomp = set()      # 加密但不解压（视频等）
-        self._other = set()          # 未识别算法 → 保留原样
+        self._encrypted = set()      # encrypted entries needing inflate (bytes key)
+        self._no_decomp = set()      # encrypted but not inflated (video etc.)
+        self._other = set()          # unrecognized algorithm -> kept verbatim
         self._tree = None
         self._parse()
 
@@ -120,7 +120,7 @@ class Decryptor:
         key = path.encode("utf-8")
         if key not in self._encrypted and key not in self._no_decomp:
             return data
-        out = self._aes.decrypt(data)[16:]      # 丢弃首块
+        out = self._aes.decrypt(data)[16:]      # drop first block
         out = _unpad(out)
         if key not in self._no_decomp:
             out = _deflate_raw(out)
@@ -128,9 +128,9 @@ class Decryptor:
 
 
 def decrypt_epub(epub_bytes: bytes, userkey: bytes) -> bytes:
-    """解密 ADEPT 加密 epub。userkey：ADE 账号 RSA 私钥 DER（PKCS#1 / PKCS#8）。
+    """Decrypt an ADEPT-encrypted epub. userkey: ADE account RSA private key DER (PKCS#1 / PKCS#8).
 
-    返回明文 epub 字节。非 ADEPT 加密（缺 rights.xml/encryption.xml）抛错。
+    Returns plaintext epub bytes. Raises for non-ADEPT encryption (missing rights.xml/encryption.xml).
     """
     zp = zipfile.ZipFile(io.BytesIO(epub_bytes))
     names = zp.namelist()
@@ -146,7 +146,7 @@ def decrypt_epub(epub_bytes: bytes, userkey: bytes) -> bytes:
     bookkey_b64 = base64.b64decode(keytext)
 
     if len(keytext) == 64:
-        # Adobe PassHash / B&N —— 非 Kobo（Kobo AC4 是标准 ADEPT），保留最小实现
+        # Adobe PassHash / B&N -- not Kobo (Kobo AC4 is standard ADEPT); minimal implementation kept
         key = base64.b64decode(userkey)[:16]
         bookkey = _unpad(AES.new(key, AES.MODE_CBC, b"\x00" * 16).decrypt(bookkey_b64))
         if len(bookkey) > 16:

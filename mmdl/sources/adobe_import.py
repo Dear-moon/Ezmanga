@@ -1,11 +1,13 @@
-"""从本机已授权的 Adobe Digital Editions 导入激活身份（DeDRM importADEactivation 独立实现，MIT）。
+"""Import an already-authorized Adobe Digital Editions activation identity from this machine
+(independent MIT implementation of DeDRM importADEactivation).
 
-ADE 把激活数据存注册表 `HKCU\\Software\\Adobe\\Adept\\Activation`，且 privateLicenseKey/device key 用
-Windows DPAPI + CPUID/硬盘序列号熵加密。本模块用标准 Windows API（ctypes + winreg）提取主密钥
-(master_key = devkey/devicesalt) 并重建 activation.xml/device.xml/devicesalt —— 这样无需脚本自己做
-anonymous 激活（被 E_AUTH_USER_AUTH 卡住），直接复用 ADE 已验证的设备+用户绑定身份来兑现 .acsm。
+ADE stores activation data under registry `HKCU\\Software\\Adobe\\Adept\\Activation``, with privateLicenseKey/device key
+encrypted by Windows DPAPI plus CPUID/disk-serial entropy. This module uses standard Windows APIs (ctypes + winreg)
+to extract the master key (master_key = devkey/devicesalt) and rebuild activation.xml/device.xml/devicesalt -- so no
+script-side anonymous activation is needed (blocked by E_AUTH_USER_AUTH); the ADE-verified device+user binding is
+reused directly to fulfill .acsm.
 
-cpuID 内核来自 flababah/cpuid.py（MIT）。只实现 Windows x64。
+cpuid core from flababah/cpuid.py (MIT). Windows x64 only.
 """
 import base64
 import ctypes
@@ -24,7 +26,7 @@ _ACT_KEY = r"Software\Adobe\Adept\Activation"
 _DEV_KEY = r"Software\Adobe\Adept\Device"
 
 
-# ---- Windows x64 CPUID（MIT，flababah/cpuid.py）----
+# ---- Windows x64 CPUID (MIT, flababah/cpuid.py) ----
 _WIN64_OPC = [
     0x53, 0x89, 0xd0, 0x49, 0x89, 0xc9, 0x44, 0x89, 0xc1,
     0x0f, 0xa2, 0x41, 0x89, 0x01, 0x41, 0x89, 0x59, 0x04,
@@ -72,7 +74,7 @@ def _get_user_lowbytes():
         user = winreg.QueryValueEx(k, "username")[0]
     except OSError:
         return None
-    # UTF-16 取低字节（DeDRM 同）
+    # take low bytes of UTF-16 (same as DeDRM)
     return user.encode("utf-16-le")[::2]
 
 
@@ -92,7 +94,7 @@ def _unprotect(data, entropy):
 
 
 def _get_master_key():
-    """从 ADE Device key（DPAPI 加密）解出 master_key（devkey/devicesalt）。"""
+    """Extract master_key (devkey/devicesalt) from the ADE Device key (DPAPI-encrypted)."""
     k = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _DEV_KEY)
     device = winreg.QueryValueEx(k, "key")[0]
     if isinstance(device, str):
@@ -101,12 +103,12 @@ def _get_master_key():
     cpu = _CPUID()
     _, b, c, d = cpu(0)
     vendor = struct.pack("III", b, d, c)
-    signature, _, _, _ = cpu(1)              # CPUID(1) eax = CPU signature（第一个返回值）
+    signature, _, _, _ = cpu(1)              # CPUID(1) eax = CPU signature (first return value)
     signature = struct.pack(">I", signature)[1:]
     user = _get_user_lowbytes()
     if user is None:
         raise RuntimeError("adobe: 读不到 Adept\\Device\\username")
-    # DeDRM 用 user 低字节；若为 None 用 WinAPI（此处仅注册表）
+    # DeDRM uses the user low bytes; WinAPI fallback when None (registry only here)
     entropy = struct.pack(">I12s3s13s", serial, vendor, signature, user)
     key = _unprotect(device, entropy)
     if not key:
@@ -114,7 +116,7 @@ def _get_master_key():
     return key
 
 
-# ---- 读注册表激活数据（DeDRM 语义：父 Default=section 名，子 Default=字段名，'value'=值）----
+# ---- read registry activation data (DeDRM semantics: parent Default=section name, child Default=field name, 'value'=value) ----
 def _read_activation_reg():
     out = {}
     root = winreg.OpenKey(winreg.HKEY_CURRENT_USER, _ACT_KEY)
@@ -125,7 +127,7 @@ def _read_activation_reg():
             i += 1
         except OSError:
             break
-        section = winreg.QueryValueEx(parent, None)[0]          # 如 'activationServiceInfo'
+        section = winreg.QueryValueEx(parent, None)[0]          # e.g. 'activationServiceInfo'
         out[section] = {}
         j = 0
         while True:
@@ -134,8 +136,8 @@ def _read_activation_reg():
                 j += 1
             except OSError:
                 break
-            field = winreg.QueryValueEx(child, None)[0]          # 如 'authURL' / 'user' / 'device'
-            val = winreg.QueryValueEx(child, "value")[0]         # 实际值
+            field = winreg.QueryValueEx(child, None)[0]          # e.g. 'authURL' / 'user' / 'device'
+            val = winreg.QueryValueEx(child, "value")[0]         # actual value
             if isinstance(val, bytes):
                 val = val.decode("utf-8", "ignore")
             out[section][field] = val
@@ -145,15 +147,15 @@ def _read_activation_reg():
 
 
 def import_ade_activation(account_dir):
-    """从注册表重建 ADE 激活态到 account_dir。返回 info。
+    """Rebuild the ADE activation state from the registry into account_dir. Returns info.
 
-    绕开 anonymous 激活（E_AUTH_USER_AUTH），直接复用 ADE 已验证的设备+用户绑定。
+    Bypasses anonymous activation (E_AUTH_USER_AUTH); reuses ADE's verified device+user binding directly.
     """
     master_key = _get_master_key()
     data = _read_activation_reg()
 
-    # 解 encryptedPrivateLicenseKey（AES-CBC，IV=fingerprint[:16]，master_key）。
-    # 务必先去 PKCS7 填充：export_user_key 的 [26:] 不能带尾部填充，否则 RSA.importKey 失败。
+    # Decrypt encryptedPrivateLicenseKey (AES-CBC, IV=fingerprint[:16], master_key).
+    # PKCS7 padding must be stripped first: export_user_key's [26:] tolerates no trailing pad, else RSA.importKey fails.
     iv = base64.b64decode(data["activationToken"]["fingerprint"])[:16]
     enc = base64.b64decode(data["credentials"]["privateLicenseKey"])
     dec = AES.new(master_key, AES.MODE_CBC, iv).decrypt(enc)

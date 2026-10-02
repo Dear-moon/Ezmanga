@@ -1,8 +1,8 @@
-"""kepub 抽页：解密后的 epub 容器 → 按 spine→XHTML→img 顺序抽页图。
+"""kepub page extraction: decrypted epub container → page images in spine→XHTML→img order.
 
-与平台无关（Kobo / Readmoo 都复用）。页序以 OPF spine itemref 为准（Kobo 图片文件名编号≠页序，
-此坑在此规避）；若 spine `page-progression-direction="rtl"` 或含 `primary-writing-mode:horizontal-rl`
-则整篇反转。双页 spread（一个 XHTML 含多个 <img>）按单页图逐个收；封面占位（svg/css 等非 raster）被过滤。
+Platform-agnostic (shared by Kobo / Readmoo). Page order follows OPF spine itemref (Kobo image filename numbering ≠ page order,
+worked around here); if the spine has `page-progression-direction="rtl"` or contains `primary-writing-mode:horizontal-rl`
+the whole document is reversed. Two-page spreads (one XHTML with multiple <img>) are collected page by page; cover placeholders (svg/css and other non-raster) are filtered out.
 """
 import gzip
 import io
@@ -33,7 +33,7 @@ def _join(base, href):
 
 
 def _detect(data):
-    """按字节魔数识别 raster 格式，返回 (ext, mime)；非 raster 返回 ("", "")。"""
+    """Detect raster format by magic bytes; returns (ext, mime), or ("", "") for non-raster."""
     if data[:3] == b"\xff\xd8\xff":
         return "jpg", "image/jpeg"
     if data[:8] == b"\x89PNG\r\n\x1a\n":
@@ -46,9 +46,9 @@ def _detect(data):
 
 
 def extract_pages(epub_bytes, *, source="kepub", book_id=None):
-    """解包已解密 epub，按 spine→XHTML→img 顺序抽页图。
+    """Unpack a decrypted epub and extract page images in spine→XHTML→img order.
 
-    返回 (Title, list[Page])。Title.source 为调用方传入（kobo/readmoo），id 用 book_id 或书名。
+    Returns (Title, list[Page]). Title.source comes from the caller (kobo/readmoo), id is book_id or title name.
     """
     with zipfile.ZipFile(io.BytesIO(epub_bytes)) as zp:
         names = set(zp.namelist())
@@ -114,7 +114,7 @@ def extract_pages(epub_bytes, *, source="kepub", book_id=None):
                     continue
                 ext, mime = _detect(data)
                 if not ext:
-                    continue  # svg/css 占位等非 raster 跳过
+                    continue  # skip non-raster such as svg/css placeholders
                 pages.append(Page(data=data, ext=ext, mime=mime))
 
     if not title_name:

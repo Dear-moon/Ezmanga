@@ -1,12 +1,13 @@
-"""Adobe anonymous 设备激活 —— .acsm 兑现前置（ADE 设备身份）。
+"""Adobe anonymous device activation -- prerequisite for .acsm fulfillment (ADE device identity).
 
-从 DeDRM_tools（GPL）的 libadobeAccount 协议**算法独立重写**为 MIT，复用 adobe_crypto 原语。
-纯 HTTP POST 到 Adobe ACS（adeactivate.adobe.com），无需安装 ADE。
+MIT-independent rewrite of the libadobeAccount protocol from DeDRM_tools (GPL), reusing adobe_crypto primitives.
+Plain HTTP POST to Adobe ACS (adeactivate.adobe.com); no ADE installation needed.
 
-流程（anonymous）：create_device → create_user → sign_in → activate_device → export_private_key。
-报文构造函数可本地单测（证书加密 / signin 结构 / activate 可验签 / 私钥剥 PKCS8 头）；
-**完整链路必须连 adeactivate.adobe.com 实测**（较旧端点，可能已迁移/风控，无法离线验证）。
-版本常量默认 ADE 3.0 值。.
+Flow (anonymous): create_device -> create_user -> sign_in -> activate_device -> export_private_key.
+Message builders are locally unit-testable (cert encryption / signin structure / activate signature verifiable /
+private key PKCS8 header strip); **the full chain requires live testing against adeactivate.adobe.com**
+(an older endpoint, possibly migrated or rate-limited, cannot be validated offline).
+Version constants default to ADE 3.0 values.
 """
 import base64
 import os
@@ -29,16 +30,16 @@ _ADEPT_NS = "http://ns.adobe.com/adept"
 _ACS = "https://adeactivate.adobe.com/adept"
 _MEDIA = "application/vnd.adobe.adept+xml"
 
-# ADE 3.0 版本常量（buildActivateReq / buildSignInRequest）
+# ADE 3.0 version constants (buildActivateReq / buildSignInRequest)
 _VER_CLIENT = "3.0.1.91394"
 _VER_HOBBES = "4.38.21971"
 _VER_OS = "Windows"
 _VER_LOCALE = "en-US"
-_VER_DEVICE_TYPE = "standalone"   # ADE 设备类型（libadobe 用 standalone）
+_VER_DEVICE_TYPE = "standalone"   # ADE device type (libadobe uses standalone)
 
 
 def _http():
-    # ADEPT 协议要求 UA="book2png"（Adobe 会按 UA 区分客户端）。
+    # ADEPT protocol requires UA="book2png" (Adobe distinguishes clients by UA).
     return HttpClient(HttpConfig(user_agent="book2png", content_type=_MEDIA))
 
 
@@ -46,7 +47,7 @@ def _ad(tag):
     return "{%s}%s" % (_ADEPT_NS, tag)
 
 
-# ---- 状态持久化 ----
+# ---- state persistence ----
 def _write_text(account_dir, name, text):
     p = Path(account_dir) / name
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -77,7 +78,7 @@ def _send_docu(doc, host, path):
 
 
 def _load_user_priv(account_dir) -> bytes:
-    """从 activation.xml 的 credentials/pkcs12 解出用户 RSA 私钥（activate/fulfill 签名用它）。"""
+    """Unwrap the user RSA private key from activation.xml credentials/pkcs12 (used to sign activate/fulfill)."""
     act = ET.fromstring(_read_text(account_dir, "activation.xml"))
     p12 = act.find(f".//{_ad('credentials')}/{_ad('pkcs12')}")
     if p12 is None or not p12.text:
@@ -87,15 +88,15 @@ def _load_user_priv(account_dir) -> bytes:
     return loaded.key.private_bytes(_ser.Encoding.DER, _ser.PrivateFormat.PKCS8, _ser.NoEncryption())
 
 
-# ---- 报文构造（可本地单测）----
+# ---- message builders (locally unit-testable) ----
 def encrypt_login_credentials(devsalt, username, password, auth_cert) -> bytes:
-    """devsalt || len_user || username || len_pwd || password，用 Adobe 公钥证书 PKCS1_v1_5 加密。"""
+    """devsalt || len_user || username || len_pwd || password, encrypted with the Adobe public cert via PKCS1_v1_5."""
     buf = bytearray(devsalt)
     ub, pb = username.encode("utf-8"), password.encode("utf-8")
     buf += bytes([len(ub)]) + ub
     buf += bytes([len(pb)]) + pb
     try:
-        # Adobe authenticationCertificate 可能是完整 X.509（tbsCertificate[6]=SPKI），也可能是裸 SPKI
+        # Adobe authenticationCertificate may be a full X.509 (tbsCertificate[6]=SPKI) or a bare SPKI
         cert = DerSequence()
         cert.decode(base64.b64decode(auth_cert))
         tbs = DerSequence()
@@ -107,7 +108,7 @@ def encrypt_login_credentials(devsalt, username, password, auth_cert) -> bytes:
 
 
 def build_device_xml(serial, fingerprint):
-    # 对齐 libgourou Device::createDeviceFile：deviceInfo 根 + deviceClass/deviceSerial/deviceName
+    # mirrors libgourou Device::createDeviceFile: deviceInfo root + deviceClass/deviceSerial/deviceName
     return (
         '<?xml version="1.0"?>'
         f'<adept:deviceInfo xmlns:adept="{_ADEPT_NS}">'
@@ -154,12 +155,12 @@ def build_signin_request(account_type, username, password, auth_cert, devsalt) -
 
 
 def build_activate_request(account_dir, priv_der) -> str:
-    """构造 <adept:activate> 报文，含对节点的 Adobe 签名（sign_node）。"""
+    """Build the <adept:activate> message with an Adobe signature over the node (sign_node)."""
     droot = ET.fromstring(_read_text(account_dir, "device.xml"))
     aroot = ET.fromstring(_read_text(account_dir, "activation.xml"))
     fingerprint = droot.findtext(_ad("fingerprint"))
     device_type = droot.findtext(_ad("deviceType"))
-    device_class = droot.findtext(_ad("deviceClass")) or _VER_CLIENT   # clientVersion 用 deviceClass（libgourou）
+    device_class = droot.findtext(_ad("deviceClass")) or _VER_CLIENT   # clientVersion uses deviceClass (libgourou)
     user = aroot.findtext(f".//{_ad('credentials')}/{_ad('user')}")
     nonce, exp = add_nonce()
     parts = [
@@ -184,13 +185,13 @@ def build_activate_request(account_dir, priv_der) -> str:
     ]
     body = "".join(parts) + "</adept:activate>"
     sig = sign_node(ET.fromstring(body), priv_der)
-    # 保留原始 adept 前缀，把 signature 插到闭合标签前
+    # keep the original adept prefix; insert signature before the closing tag
     return body.replace("</adept:activate>",
                         f"<adept:signature>{sig}</adept:signature></adept:activate>")
 
 
 def export_private_key(account_dir) -> bytes:
-    """activation.xml 的 credentials/privateLicenseKey 剥 26B PKCS#8 头 → 用户 RSA 私钥 DER。"""
+    """Strip the 26B PKCS#8 header from activation.xml credentials/privateLicenseKey -> user RSA private key DER."""
     root = ET.fromstring(_read_text(account_dir, "activation.xml"))
     elem = root.find(f".//{_ad('credentials')}/{_ad('privateLicenseKey')}")
     if elem is None:
@@ -198,7 +199,7 @@ def export_private_key(account_dir) -> bytes:
     return base64.b64decode(elem.text)[26:]
 
 
-# ---- 网络步骤（需实测）----
+# ---- network steps (require live testing) ----
 def _get_activation_service_info():
     host, base = split_url(_ACS)
     st, body = _http().request(host, "GET", base + "/ActivationServiceInfo")
@@ -216,12 +217,12 @@ def _get_activation_service_info():
 
 
 def activate_anonymous(account_dir) -> dict:
-    """完整 anonymous 激活（需连 Adobe ACS 实测）。写 account_dir 状态文件。"""
+    """Full anonymous activation (requires live Adobe ACS). Writes account_dir state files."""
     account_dir = Path(account_dir)
     account_dir.mkdir(parents=True, exist_ok=True)
 
     serial = make_serial()
-    devsalt = os.urandom(16)   # ADE DEVICE_KEY 为 16 字节（createDeviceKeyFile）；32B 会致 signInData 字段错位
+    devsalt = os.urandom(16)   # ADE DEVICE_KEY is 16 bytes (createDeviceKeyFile); 32B misaligns the signInData field
     priv_der = make_device_keypair()
     (account_dir / "devicesalt").write_bytes(devsalt)
     (account_dir / "privkey.der").write_bytes(priv_der)
@@ -235,7 +236,7 @@ def activate_anonymous(account_dir) -> dict:
         f".//{_ad('activationServiceInfo')}/{_ad('authURL')}")
     auth_cert = ET.fromstring(_read_text(account_dir, "activation.xml")).findtext(
         f".//{_ad('activationServiceInfo')}/{_ad('authenticationCertificate')}")
-    signin = build_signin_request("anonymous", "anonymous", "", auth_cert, devsalt)  # libgourou: username="anonymous" 非空
+    signin = build_signin_request("anonymous", "anonymous", "", auth_cert, devsalt)  # libgourou: username="anonymous", non-empty
     ah, ap = split_url(auth_url)
     cred = ET.fromstring(_send_docu(signin, ah, ap + "/SignInDirect"))
     if cred.tag == _ad("error"):
@@ -254,7 +255,7 @@ def activate_anonymous(account_dir) -> dict:
         f"<adept:privateLicenseKey>{base64.b64encode(priv_lic).decode()}</adept:privateLicenseKey>"
         "</adept:credentials></adept:activationInfo>"))
 
-    # activate_device：把 /Activate 的 activationToken 写进 activation.xml（含 device，fulfill 需要）
+    # activate_device: write the activationToken from /Activate into activation.xml (includes device, needed by fulfill)
     activate = build_activate_request(account_dir, _load_user_priv(account_dir))
     host, base = split_url(_ACS)
     resp = ET.fromstring(_send_docu(activate, host, base + "/Activate"))

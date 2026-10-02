@@ -1,15 +1,15 @@
-"""内联 Kobo Obok 解密（AES-128-ECB 双层 + PKCS7 + gzip 展开）。
+"""Inline Kobo Obok decryption (two-layer AES-128-ECB + PKCS7 + gzip inflation).
 
-只依赖 pycryptodome，不引入 DeDRM_tools。密钥派生与每文件解密公式按
-docs/kobo_source_design.md：
+Depends only on pycryptodome, no DeDRM_tools. Key derivation and per-file decryption
+formulas per docs/kobo_source_design.md:
 
   deviceid = SHA256_hex(hash_key + serial)
-  userkey  = unhex(SHA256_hex(deviceid + userid)[32:])        # 后 16B = AES-128 密钥
+  userkey  = unhex(SHA256_hex(deviceid + userid)[32:])        # last 16B = AES-128 key
   page_key = AES_ECB_decrypt(base64(elementkey), userkey)
-  plain    = AES_ECB_decrypt(文件字节, page_key)，去 PKCS#7，若 gzip 魔数再 gunzip
+  plain    = AES_ECB_decrypt(file_bytes, page_key), strip PKCS#7, gunzip if gzip magic
 
-elementkey 优先从 .kepub 的 META-INF/encryption.xml（每文件 CipherReference@EncryptionKey）
-读取；缺失时用调用方给的 content_keys（下载端点返回，dict: zip名->base64 elementkey）兜底。
+elementkey is read preferentially from the .kepub's META-INF/encryption.xml (per-file
+CipherReference@EncryptionKey); falls back to caller-supplied content_keys (returned by the download endpoint, dict: zip name -> base64 elementkey).
 """
 import base64
 import gzip
@@ -22,7 +22,7 @@ from Crypto.Cipher import AES
 
 HASH_KEYS = ("88b3a2e13", "XzUhGYdFp", "NoCanLook", "QJhwzAtXL")
 
-# elementkey 通常为 base64 的 16B 密文；AES-128-ECB 每块 16B
+# elementkey is usually base64 of a 16B ciphertext; AES-128-ECB block size is 16B
 _BLOCK = 16
 
 
@@ -38,18 +38,18 @@ def _unpad_pkcs7(data):
 
 
 def device_id(serial: str, hash_key: str = HASH_KEYS[0]) -> str:
-    """由设备序列号派生 Kobo deviceid：sha256(hash_key + serial) 的 hex。"""
+    """Derive Kobo deviceid from device serial: hex of sha256(hash_key + serial)."""
     return sha256((hash_key + serial).encode("utf-8")).hexdigest()
 
 
 def user_key(deviceid: str, userid: str) -> bytes:
-    """由 deviceid + userid 派生 16B AES 密钥（SHA256 hex 的后 16B）。"""
+    """Derive the 16B AES key from deviceid + userid (last 16B of the SHA256 hex)."""
     h = sha256((deviceid + userid).encode("utf-8")).hexdigest()
     return bytes.fromhex(h[32:])
 
 
 def _load_encryption_keymap(src: zipfile.ZipFile, content_keys=None) -> dict:
-    """返回 {zip条目名: elementkey_bytes}。优先 encryption.xml，缺失用 content_keys 兜底。"""
+    """Return {zip entry name: elementkey_bytes}. Prefers encryption.xml, falls back to content_keys."""
     keymap = {}
     try:
         raw = src.read("META-INF/encryption.xml")
@@ -79,10 +79,10 @@ def _load_encryption_keymap(src: zipfile.ZipFile, content_keys=None) -> dict:
 
 
 def _decrypt_entry(data: bytes, elementkey: bytes, userkey: bytes) -> bytes:
-    """单文件：elementkey → page_key → AES-ECB 解密 → 去 PKCS7 → 必要时 gunzip。"""
+    """Single file: elementkey → page_key → AES-ECB decrypt → strip PKCS7 → gunzip if needed."""
     page_key = AES.new(userkey, AES.MODE_ECB).decrypt(elementkey)
     if len(data) % _BLOCK:
-        # Kobo 块加密文件应为 16B 的整数倍
+        # Kobo block-ciphered files should be a multiple of 16B
         data = data[: len(data) - len(data) % _BLOCK]
     plain = AES.new(page_key, AES.MODE_ECB).decrypt(data)
     plain = _unpad_pkcs7(plain)
@@ -95,9 +95,9 @@ def _decrypt_entry(data: bytes, elementkey: bytes, userkey: bytes) -> bytes:
 
 
 def decrypt_kepub(kepub_bytes: bytes, deviceid: str, userid: str, content_keys=None) -> bytes:
-    """解密整本 .kepub，返回重建后的明文 zip（epub）字节。
+    """Decrypt a whole .kepub; returns rebuilt plaintext zip (epub) bytes.
 
-    加密条目替换为明文，其余条目原样保留；密钥派生自 deviceid+userid。
+    Encrypted entries are replaced with plaintext, others kept as-is; keys derive from deviceid+userid.
     """
     userkey = user_key(deviceid, userid)
     src = zipfile.ZipFile(io.BytesIO(kepub_bytes))

@@ -1,15 +1,15 @@
-"""Kobo 激活与下载 API：网页激活流 → device 注册 → token 持久化 → 下载整本 .kepub。
+"""Kobo activation and download API: web activation flow → device registration → token persistence → whole-.kepub download.
 
-鉴权（网页激活流，非密码直传）：
-  1. GET auth.kobobooks.com/ActivateOnWeb —— 浏览器授权（用户登录；仅邮箱）
-  2. POST storeapi.kobo.com/v1/auth/device   —— body 含 UserKey → 拿 deviceId/userId/token
-  3. POST storeapi.kobo.com/v1/auth/refresh  —— accessToken 续期
+Auth (web activation flow, no direct password):
+  1. GET auth.kobobooks.com/ActivateOnWeb —— browser authorization (user login; email only)
+  2. POST storeapi.kobo.com/v1/auth/device   —— body carries UserKey → returns deviceId/userId/token
+  3. POST storeapi.kobo.com/v1/auth/refresh  —— accessToken renewal
 
-留存 accessToken / userKey / deviceId / userId / hashKey 到 ~/.mmdl/kobo.json
-（仿 tongli_auth 的 tongli_refresh.json，URL 秘钥不落盘，密码不落盘）。
+Persists accessToken / userKey / deviceId / userId / hashKey to ~/.mmdl/kobo.json
+(mirrors tongli_auth's tongli_refresh.json; URL secrets and password never touch disk).
 
-⚠️ Store API 的 host/path、header 参数与 content_keys 结构均为服务端下发，需真实漫画实测校准。
-   经 KOBO_API_BASE / KOBO_API_KEY 环境变量可配置；失败时抛出含状态/响应摘要的可读错误。
+⚠️ Store API host/path, header params and content_keys structure are server-supplied; calibrate against a real manga purchase.
+   Configurable via KOBO_API_BASE / KOBO_API_KEY env vars; failures raise readable errors with status/response excerpt.
 """
 import getpass
 import json
@@ -37,7 +37,7 @@ def _store() -> tuple[str, str]:
     return split_url(STORE_API)
 
 
-# ---- token 持久化（仿 tongli_refresh.json）----
+# ---- token persistence (mirrors tongli_refresh.json) ----
 def load_tokens(path=CRED_FILE) -> dict:
     try:
         p = Path(path)
@@ -59,9 +59,9 @@ def save_tokens(tokens: dict, path=CRED_FILE):
         pass
 
 
-# ---- 设备激活 ----
+# ---- device activation ----
 def _wait_for_userkey(client, timeout=180):
-    """在激活页轮询，抓取授权完成后带 userkey 的 URL / 页面文本。"""
+    """Poll the activation page; capture the userkey from the post-auth URL or page text."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         href = client.eval("location.href") or ""
@@ -76,7 +76,7 @@ def _wait_for_userkey(client, timeout=180):
 
 
 def _register_device(userkey, serial=None):
-    """device 注册：POST /v1/auth/device。payload/头按 Kobo 逆向默认；经实测校准。"""
+    """Device registration: POST /v1/auth/device. payload/headers are Kobo reverse-engineering defaults; calibrate by testing."""
     serial = serial or os.environ.get("KOBO_SERIAL", f"MMDL-{int(time.time())}")
     payload = {
         "ApiKey": API_KEY,
@@ -96,9 +96,9 @@ def _register_device(userkey, serial=None):
 
 
 def setup(cdp_url=DEFAULT_CDP_URL, path=CRED_FILE) -> dict:
-    """一次性激活：CDP 打开 ActivateOnWeb → 用户登录 → 抓 userkey → 设备注册 → 存 token。
+    """One-time activation: CDP opens ActivateOnWeb → user logs in → capture userkey → device registration → save tokens.
 
-    需本地 debug 浏览器（含 websocket-client）。返回并持久化 token dict。
+    Requires a local debug browser (with websocket-client). Returns and persists the token dict.
     """
     client = CdpClient(cdp_url=cdp_url, target_url_substr="")
     try:
@@ -113,7 +113,7 @@ def setup(cdp_url=DEFAULT_CDP_URL, path=CRED_FILE) -> dict:
         "accessToken": data.get("AccessToken") or data.get("accessToken") or "",
         "refreshToken": data.get("RefreshToken") or data.get("refreshToken") or "",
         "userKey": userkey,
-        # serial 是 Obok deviceid 派生的输入（SHA256(hash_key+serial)）；服务器返回的 DeviceId 另存
+        # serial feeds Obok deviceid derivation (SHA256(hash_key+serial)); server-returned DeviceId is stored separately
         "serial": serial,
         "deviceId": data.get("DeviceId") or data.get("deviceId") or data.get("deviceID") or "",
         "userId": data.get("UserId") or data.get("userId") or data.get("userID") or "",
@@ -126,7 +126,7 @@ def setup(cdp_url=DEFAULT_CDP_URL, path=CRED_FILE) -> dict:
     return tokens
 
 
-# ---- 鉴权 ----
+# ---- auth ----
 def _headers(tokens, extra=None):
     h = {}
     if tokens.get("accessToken"):
@@ -140,7 +140,7 @@ def _headers(tokens, extra=None):
 
 def _expired(tokens):
     exp = tokens.get("expiresAt")
-    # 仅当字段"缺失"时才视为未知；0 是真实过期，不能走这里
+    # Treat as unknown only when the field is missing; 0 is a real expiry and must not take this path
     if exp is None or exp == "":
         return not tokens.get("accessToken")
     try:
@@ -150,7 +150,7 @@ def _expired(tokens):
 
 
 def ensure_tokens(tokens=None, path=CRED_FILE) -> dict:
-    """保证有可用 accessToken：读档 → 若过期则 /auth/refresh → 回写。"""
+    """Ensure a usable accessToken: load → /auth/refresh if expired → write back."""
     tokens = tokens or load_tokens(path)
     if tokens.get("accessToken") and not _expired(tokens):
         return tokens
@@ -171,12 +171,12 @@ def ensure_tokens(tokens=None, path=CRED_FILE) -> dict:
     return tokens
 
 
-# ---- 下载 ----
+# ---- download ----
 def download_book(book_id: str, tokens=None, path=CRED_FILE):
-    """下载整本 .kepub。返回 (kepub_bytes, content_keys: dict) — elementkey 供 kobo_drm 使用。
+    """Download the whole .kepub. Returns (kepub_bytes, content_keys: dict) — elementkeys for kobo_drm.
 
-    端点从 /v1/initialization 的 Resources 下发（library_sync / content_access_book 模板），
-    真实路径与 content_keys 结构需实测；此处按初始化解出的模板拼接并做可读报错。
+    The endpoint is supplied by /v1/initialization Resources (library_sync / content_access_book templates);
+    real path and content_keys structure need live testing; here we build the URL from the resolved template and raise readable errors.
     """
     tokens = ensure_tokens(tokens, path)
     host, _ = _store()
@@ -205,7 +205,7 @@ def _download_from_api(host, book_id, tokens):
     book_url = template.format(ContentId=book_id, contentId=book_id) if "{" in template else template
     if book_url.startswith("http"):
         dl_host, url = split_url(book_url)
-    else:  # 相对路径 → 拼到 storeapi host
+    else:  # relative path → join onto storeapi host
         dl_host, url = host, book_url
 
     st, body = _http().request(dl_host, "GET", url, headers=_headers(tokens))
@@ -217,7 +217,7 @@ def _download_from_api(host, book_id, tokens):
 
 
 def _extract_content_keys(init, book_id):
-    """从初始化响应尝试提取 content_keys（elementkey 集）；结构需实测，取不到返回空 dict。"""
+    """Try to extract content_keys (elementkey set) from the init response; structure needs live testing, empty dict if absent."""
     ck = init.get("contentKeys") or init.get("ContentKeys")
     if isinstance(ck, dict):
         return ck
