@@ -32,6 +32,9 @@ class Bilibili(BaseSource):
         from .bilibili_client import BilibiliClient
         return BilibiliClient()
 
+    def setup(self):
+        self.ensure_client().login()
+
     @staticmethod
     def _ids(value):
         value = str(value).strip()

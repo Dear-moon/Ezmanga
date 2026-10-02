@@ -3,5 +3,6 @@ cryptography>=43.0
 curl_cffi>=0.7.0
 msgpack>=1.0.0
 wasmtime>=49.0.0,<50.0.0
+qrcode>=8.2,<9.0
 
 Pillow>=11.3.0

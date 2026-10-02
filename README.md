@@ -24,7 +24,7 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `mangamillion` | ✅ implemented | none (device token) | Shueisha free service, protobuf + AES decryption |
 | `tongli` | ✅ implemented | auto login (`refreshToken`) | Taiwan 東立 e-book, JSON API, Azure SAS image links (no DRM) |
 | `bookwalker` | ✅ implemented | logged-in browser | Native JPG restoration with ordinary-browser BW helper; optional debug-browser Canvas capture; not in Actions |
-| `bilibili` | ✅ implemented | anonymous HTTP; browser for Canvas mode | Python/WASM API and image decryption; optional browser Canvas capture |
+| `bilibili` | ✅ implemented | anonymous or QR-login HTTP; browser for Canvas mode | Python/WASM API and image decryption; optional browser Canvas capture |
 | `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `lightnovel` | ✅ implemented | Light Novel Shelf refresh token | Pure HTTP SignalR LongPolling, paginated comics, WebP images |
 | `keiyoushi` | ✅ initial support | extension-dependent | Local JDK 25+, on-demand stdio host, official API 1.6 JARs |
@@ -106,7 +106,9 @@ python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/vie
 # Optional Canvas capture (PNG; needs logged-in debug browser on :9222)
 python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --bw-mode canvas --cbz
 
-# Bilibili HTTP/WASM: one reader chapter, no browser required
+# Bilibili: optional QR login for chapters your account can access
+python -m mmdl --source bilibili --setup
+# HTTP/WASM: one reader chapter, no browser required
 python -m mmdl --source bilibili --url "https://manga.bilibili.com/mc26731/329893" --cbz
 # Or select chapters by comic ID
 python -m mmdl --source bilibili --title 26731 --chapters 1 --cbz
@@ -173,7 +175,7 @@ Original images are retained. Re-exporting replaces archives with the same chapt
 | `--cbz-only <title-dir>` | Export existing chapter/volume folders as CBZ without downloading |
 | `--token <t>` | Source auth token (Tongli Bearer or Light Novel Shelf refresh token) |
 | `--book-group <g>` | Source optional param (e.g. Tongli BookGroupID) |
-| `--setup` | One-time account activation/login for a source (e.g. `kobo`) |
+| `--setup` | One-time account activation/login for a source (e.g. `kobo`, `bilibili`) |
 | `--adobe-setup` | Import the machine's ADE device identity from the registry (Kobo `.acsm` fulfill) |
 
 ### Output layout
@@ -211,6 +213,13 @@ own API calls, field mapping, and image handling.
 
 ### Bilibili HTTP mode
 
+Log in once with `python -m mmdl --source bilibili --setup`. Scan the printed local PNG path with
+the Bilibili app and confirm on your phone. QR generation and polling use HTTP; no browser is started.
+The QR image is removed when setup finishes. The account session is saved separately in
+`~/.mmdl/bilibili_cookies.txt` and loaded for subsequent HTTP downloads. This file contains private
+cookies: keep it local. Expired login sessions require running `--setup` again. Login does not purchase
+or unlock chapters; the account must already have access.
+
 `bilibili` defaults to `--bili-mode http`. `--url` accepts a comic or reader URL; a reader URL downloads
 only its chapter. `--title` accepts a comic ID or URL and supports `--chapters`, resume, EPUB, and
 per-chapter ZIP/CBZ export. It does not request popular/recent listings or buy/unlock chapters.
@@ -223,9 +232,11 @@ Optional WASM telemetry is not transmitted.
 
 The current protocol snapshot is reader `550c4c7ca4`. Website protocol changes can require an update.
 The Go callback source bundled beside the host is public protocol metadata, not executable JS.
-HTTP mode currently uses an anonymous session: a complete 22-page free chapter, including four
-encrypted images, was verified. Logged-in/paid chapters have not been verified; the existing Canvas
-mode remains available for the reader session. Account cookies, image tokens, and temporary private
+HTTP mode uses the saved login session when available, otherwise an anonymous session. A complete
+22-page free chapter, including four encrypted images, was verified. QR login, saved-session reuse,
+and an encrypted free page were also verified. Purchased-chapter HTTP download was verified with
+a logged-in account; decoded JPEGs and CBZ archives passed validation. The existing Canvas mode
+remains available for the reader session. Account cookies, image tokens, and temporary private
 keys are not stored in the protocol cache.
 
 ## Project structure

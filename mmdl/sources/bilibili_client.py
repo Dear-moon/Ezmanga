@@ -1,6 +1,8 @@
 """Bilibili's signed comic API and encrypted image transport."""
 import base64
+from http.cookiejar import LWPCookieJar
 import json
+import os
 from pathlib import Path
 import re
 import time
@@ -30,19 +32,74 @@ def _json(value):
 
 class BilibiliClient:
     def __init__(self):
-        self.session = requests.Session(impersonate="chrome")
+        self.profile = Path.home() / ".mmdl" / "bilibili_cookies.txt"
+        cookies = LWPCookieJar(str(self.profile))
+        if self.profile.is_file():
+            cookies.load(ignore_discard=True)
+        self.session = requests.Session(impersonate="chrome", cookies=cookies)
         self.cache = Path.home() / ".mmdl" / "bilibili"
         self.cache.mkdir(parents=True, exist_ok=True)
         self.runtimes = {}
         reader = self._asset(READER).read_text(encoding="utf-8")
         self.header = re.search(r"['\"]([0-9A-Fa-f]{32})['\"]", reader).group(1)
-        response = self.session.get("https://api.bilibili.com/x/frontend/finger/spi", timeout=30)
-        self._check_http(response, "device initialization")
-        device = response.json()
-        if device["code"] != 0:
-            raise RuntimeError(f"Bilibili device initialization failed: {device['code']}")
-        self.session.cookies.set("buvid3", device["data"]["b_3"], domain=".bilibili.com")
-        self.session.cookies.set("buvid4", device["data"]["b_4"], domain=".bilibili.com")
+        if not self.session.cookies.get("buvid3"):
+            response = self.session.get("https://api.bilibili.com/x/frontend/finger/spi", timeout=30)
+            self._check_http(response, "device initialization")
+            device = response.json()
+            if device["code"] != 0:
+                raise RuntimeError(f"Bilibili device initialization failed: {device['code']}")
+            self.session.cookies.set("buvid3", device["data"]["b_3"], domain=".bilibili.com")
+            self.session.cookies.set("buvid4", device["data"]["b_4"], domain=".bilibili.com")
+
+    def login(self):
+        import qrcode
+
+        passport = "https://passport.bilibili.com/x/passport-login/web/qrcode/"
+        response = self.session.get(passport + "generate",
+            params={"source": "main_web", "go_url": ORIGIN + "/"}, timeout=30)
+        self._check_http(response, "QR generation")
+        generated = response.json()
+        if generated["code"] != 0:
+            raise RuntimeError(f"Bilibili QR generation failed: code={generated['code']}")
+        qr = generated["data"]
+        image_path = self.profile.with_name("bilibili_login.png")
+        qrcode.make(qr["url"]).save(image_path)
+        print(f"[bili] 请用哔哩哔哩 App 扫码并确认：{image_path}", flush=True)
+        scanned = False
+        try:
+            while True:
+                time.sleep(2)
+                response = self.session.get(passport + "poll",
+                    params={"qrcode_key": qr["qrcode_key"], "source": "main_web"}, timeout=30)
+                self._check_http(response, "QR login")
+                result = response.json()
+                if result["code"] != 0:
+                    raise RuntimeError(f"Bilibili QR login failed: code={result['code']}")
+                code = result["data"]["code"]
+                if code == 0:
+                    response = self.session.get("https://api.bilibili.com/x/web-interface/nav", timeout=30)
+                    self._check_http(response, "login verification")
+                    account = response.json()
+                    if account["code"] != 0 or not account["data"]["isLogin"]:
+                        raise RuntimeError("Bilibili QR login did not create a valid account session")
+                    temporary = self.profile.with_suffix(".tmp")
+                    self.session.cookies.jar.save(str(temporary), ignore_discard=True)
+                    os.chmod(temporary, 0o600)
+                    temporary.replace(self.profile)
+                    print(f"[bili] 登录成功，登录态已保存：{self.profile}", flush=True)
+                    return
+                if code == 86101:
+                    continue
+                if code == 86090:
+                    if not scanned:
+                        print("[bili] 已扫码，请在手机上确认登录", flush=True)
+                        scanned = True
+                    continue
+                if code == 86038:
+                    raise RuntimeError("Bilibili QR expired; run --source bilibili --setup again")
+                raise RuntimeError(f"Bilibili QR login failed: code={code}")
+        finally:
+            image_path.unlink()
 
     @staticmethod
     def _check_http(response, operation):
