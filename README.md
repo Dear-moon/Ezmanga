@@ -101,8 +101,9 @@ python -m mmdl --source tongli --title <volume-guid> --lang zh-TW
 # or pin a static token to skip auto-login:
 python -m mmdl --source tongli --title <volume-guid> --lang zh-TW --token "$TONG_LI_TOKEN"
 
-# BookWalker native: ordinary logged-in browser with the BW helper extension
-python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --cbz
+# BookWalker native: register the extension once, then start the local download service
+python -m mmdl --source bookwalker --setup
+python -m mmdl --source bookwalker --bw-serve
 # Optional Canvas capture (PNG; needs logged-in debug browser on :9222)
 python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --bw-mode canvas --cbz
 
@@ -175,7 +176,8 @@ Original images are retained. Re-exporting replaces archives with the same chapt
 | `--cbz-only <title-dir>` | Export existing chapter/volume folders as CBZ without downloading |
 | `--token <t>` | Source auth token (Tongli Bearer or Light Novel Shelf refresh token) |
 | `--book-group <g>` | Source optional param (e.g. Tongli BookGroupID) |
-| `--setup` | One-time account activation/login for a source (e.g. `kobo`, `bilibili`) |
+| `--setup` | One-time source setup (e.g. Kobo activation, Bilibili login, BW extension registration) |
+| `--bw-serve` | Run the local BW service; the extension's Start download button starts the current volume, with CBZ export by default |
 | `--adobe-setup` | Import the machine's ADE device identity from the registry (Kobo `.acsm` fulfill) |
 
 ### Output layout
@@ -382,29 +384,41 @@ and moved into place only when complete, so interrupted writes are retried on re
 
 ## BookWalker Japan download modes
 
-The existing `--source bookwalker --url <reader-url>` command defaults to `--bw-mode native`.
-It restores page resources locally to JPG. Native downloads use your ordinary logged-in
+Open the extension from the BW reader and click **开始下载** (Start download) to begin a native
+download. Opening the extension alone does not start downloading. The local service restores
+page resources to JPG. Native downloads use your ordinary logged-in
 Chrome/Edge browser through the helper extension in [browser/bookwalker](browser/bookwalker).
 They do not require a debugging port, a separate browser profile, or Java.
 
 One-time setup: open `chrome://extensions` or `edge://extensions`, enable developer mode,
-choose **Load unpacked**, and select the `browser/bookwalker` directory. This developer-mode
-switch installs the local extension; it does not enable browser remote debugging.
+choose **Load unpacked**, and select the `browser/bookwalker` directory. Then run
+`python -m mmdl --source bookwalker --setup` and enter the extension's ID from the extensions page.
+Registration stores that public ID in `~/.mmdl/bookwalker_extension.json`. This developer-mode
+switch installs the local extension; it does not enable browser remote debugging. After updating
+the extension files, use **Reload** on the extensions page.
 
 For each download:
 
-1. Open the requested BW manga reader in your already logged-in browser, then click the
-   **Ezmanga BW** extension to open its connection page.
-2. Run `python -m mmdl --source bookwalker --url "<reader-url>" --cbz`.
-3. Paste the command's pairing code into the connection page and click **Connect**.
-4. Keep the reader and connection tabs open until the download finishes.
+1. Run `python -m mmdl --source bookwalker --bw-serve` once and leave it running.
+2. Open the requested BW manga reader in your already logged-in browser, then click
+   **Ezmanga BW**, then **开始下载** (Start download). No pairing code is required.
+3. Keep the reader and download-status tabs open until it finishes. The service stays available
+   for the next volume; it processes one volume at a time.
+
+The default output is `manga_download/bookwalker/<title>` with one CBZ per volume. The service
+supports `--output`, `--throttle`, `--zip`, `--cbz`, and `--epub`; `--zip` selects ZIP instead of
+the default CBZ, and `--zip --cbz` exports both. Use the actual reader URL/tab: the product page's
+ID can differ from the reader's `cid`.
 
 The helper reads cookies applicable to the selected BW reader/API and runs the website's
 authorization script in that reader tab. It sends updated sessions every 20 seconds to a
-temporary receiver bound to `127.0.0.1`. The receiver closes with the download. Session data
-and the generated per-download pairing code stay in memory. The helper verifies the receiver
-before sending cookies. The receiver accepts only the requested reader and paired client.
-If the default port is occupied, use `--bw-port <port>` and enter that port in the helper.
+service bound to `127.0.0.1`. It accepts requests only from the registered extension's browser
+origin and keeps account cookies in memory for the current download. Session updates must match
+that download's reader. Use Ctrl+C to stop the service. If the default port is occupied, use
+`--bw-port <port>` and enter that port in the helper; the helper remembers the port.
+
+BW HTTP requests retry TLS handshake failures (`curl 35`) up to twice, waiting one second before
+the first retry and two seconds before the second. Other errors are reported without retrying.
 
 Python fetches and decodes the Publus configuration, restores image tiles with Pillow,
 and refreshes short-lived reading authorization during downloads. The native implementation
@@ -414,6 +428,7 @@ protocol and is not covered here. Native downloads do not turn pages or extract 
 
 Use `--bw-mode canvas` to select the existing browser-rendered PNG capture explicitly.
 That mode still needs your logged-in debug browser and `websocket-client`.
+For example: `python -m mmdl --source bookwalker --url "<reader-url>" --bw-mode canvas --cbz`.
 Native errors do not silently switch modes. Both modes support `--epub`, `--zip`, and `--cbz`.
 Native restoration uses the already declared `curl_cffi`, `pycryptodome`, and Pillow dependencies.
 Scrambled pages are encoded as JPEG at quality 90; unmodified JPEG pages keep their bytes.

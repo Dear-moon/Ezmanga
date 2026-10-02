@@ -16,6 +16,10 @@ class BookWalker(BaseSource):
         self.bw_mode = "native"
         self.bw_port = 19225
 
+    def setup(self):
+        from .bookwalker_browser import register_extension
+        register_extension(input("Ezmanga BW 扩展 ID：").strip())
+
     def http_config(self):
         raise NotImplementedError("BookWalker is browser-based; no HTTP config.")
 
@@ -46,9 +50,12 @@ class BookWalker(BaseSource):
     def capture_from_url(self, url, *, lang=None, quality=None, **kw):
         if self.bw_mode == "canvas":
             return self._capture_canvas(url, lang=lang, quality=quality, **kw)
-        return self._capture_native(url)
+        bridge = kw.get("browser_session")
+        if bridge is None:
+            raise RuntimeError("Start --source bookwalker --bw-serve, then click Start download in the Ezmanga BW extension")
+        return self._capture_native(url, bridge)
 
-    def _capture_native(self, url):
+    def _capture_native(self, url, bridge):
         import time
         from http.cookiejar import Cookie
         from http.cookies import SimpleCookie
@@ -57,13 +64,12 @@ class BookWalker(BaseSource):
 
         from curl_cffi import requests
         from .bookwalker_publus import decode_config, image_filename, restore_image
-        from .bookwalker_browser import BrowserBridge
 
         address = urlsplit(url)
         viewers = {"viewer.bookwalker.jp", "viewer-trial.bookwalker.jp", "viewer-df.bookwalker.jp"}
         if address.scheme != "https" or address.hostname not in viewers:
             raise ValueError("Native BW requires a Japanese BookWalker reader URL; use --bw-mode canvas for other readers")
-        with BrowserBridge(self.bw_port, url) as bridge:
+        with bridge:
             snapshot = bridge.session()
             user_agent = snapshot["userAgent"]
             with requests.Session(impersonate="chrome", headers={"User-Agent": user_agent, "Referer": url}, timeout=60) as session:
@@ -80,7 +86,18 @@ class BookWalker(BaseSource):
                         ))
 
                 def get(target_url, params=None):
-                    response = session.get(target_url, params=params)
+                    for attempt in range(3):
+                        try:
+                            response = session.get(target_url, params=params)
+                            break
+                        except requests.RequestsError as error:
+                            if error.code != 35:
+                                raise
+                            host = urlsplit(target_url).hostname
+                            if attempt == 2:
+                                raise RuntimeError(f"BW TLS handshake failed ({host}, curl 35); try again") from error
+                            print(f"[bw] TLS handshake failed ({host}); retry {attempt + 1}/2")
+                            time.sleep(attempt + 1)
                     if response.status_code != 200:
                         raise RuntimeError(f"BW request failed (HTTP {response.status_code}); refresh the browser reading session")
                     return response

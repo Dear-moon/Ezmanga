@@ -40,6 +40,7 @@ def build_parser():
     ap.add_argument("--url", help="阅读器 URL（如 BookWalker reader）")
     ap.add_argument("--bw-mode", choices=("native", "canvas"), help="BookWalker 下载方式（默认 native 本地还原；canvas 提取已绘制页面）")
     ap.add_argument("--bw-port", type=int, help="BW 辅助扩展连接端口（默认 19225）")
+    ap.add_argument("--bw-serve", action="store_true", help="启动 BW 本机下载服务，供浏览器扩展一键下载")
     ap.add_argument("--bili-mode", choices=("http", "canvas"), help="B 漫下载方式（默认 http；canvas 使用调试浏览器）")
     ap.add_argument("--output", default=None, help="输出目录")
     ap.add_argument("--throttle", type=float, default=0.3, help="单页下载间隔秒数")
@@ -104,8 +105,10 @@ def _validate(source, args):
                                  or args.epub_only or args.zip_only or args.cbz_only):
         raise SystemExit("[error] 设置导入不能与安装、初始化或离线导出同时使用")
 
-    if (args.bw_mode is not None or args.bw_port is not None) and source.name != "bookwalker":
-        raise SystemExit("[error] --bw-mode/--bw-port 需要 --source bookwalker")
+    if (args.bw_mode is not None or args.bw_port is not None or args.bw_serve) and source.name != "bookwalker":
+        raise SystemExit("[error] --bw-mode/--bw-port/--bw-serve 需要 --source bookwalker")
+    if args.bw_serve and (args.setup or args.url or args.title or args.list or args.epub_only or args.zip_only or args.cbz_only or args.bw_mode == "canvas"):
+        raise SystemExit("[error] --bw-serve 不能与下载、初始化、离线导出或 canvas 模式同时使用")
     if args.bili_mode is not None and source.name != "bilibili":
         raise SystemExit("[error] --bili-mode 需要 --source bilibili")
     if source.name == "bilibili" and source.bili_mode == "canvas" and args.title:
@@ -199,6 +202,12 @@ def _run(source, args):
         return
 
     out_dir = args.output or source.default_output
+
+    if args.bw_serve:
+        from .sources.bookwalker_browser import serve_downloads
+        formats = tuple(extension for extension, enabled in (("zip", args.zip), ("cbz", args.cbz)) if enabled)
+        serve_downloads(source, out_dir, epub=args.epub, archive_formats=formats or ("cbz",))
+        return
 
     # capture 轨（延后，BookWalker）
     if args.url and not (source.name == "bilibili" and source.bili_mode == "http"):

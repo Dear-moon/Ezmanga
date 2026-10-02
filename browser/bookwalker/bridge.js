@@ -3,6 +3,8 @@ const form = document.getElementById("connect");
 const button = document.getElementById("button");
 const status = document.getElementById("status");
 const reader = document.getElementById("reader");
+const port = document.getElementById("port");
+port.value = localStorage.getItem("bwPort") || "19225";
 
 async function readerSession() {
   const address = new URL(location.href);
@@ -63,50 +65,61 @@ async function snapshot() {
   return {...result, cookies: [...cookies.values()]};
 }
 
-async function pair(endpoint, token) {
-  const response = await fetch(endpoint + "/pair", {cache: "no-store"});
-  if (!response.ok) throw new Error("下载器尚未启动或连接端口不正确");
-  const {proof} = await response.json();
-  const encoder = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", encoder.encode(token), {name: "HMAC", hash: "SHA-256"}, false, ["sign"]);
-  const signed = await crypto.subtle.sign("HMAC", key, encoder.encode("ezmanga-bookwalker"));
-  const expected = [...new Uint8Array(signed)].map((value) => value.toString(16).padStart(2, "0")).join("");
-  if (proof !== expected) throw new Error("配对码不正确，请使用本次下载显示的配对码");
+async function request(endpoint, path, payload) {
+  const response = await fetch(endpoint + path, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error);
+  return result;
 }
 
-form.addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const endpoint = "http://127.0.0.1:" + Number(document.getElementById("port").value);
-  const token = document.getElementById("code").value.trim();
-  button.disabled = true;
-  status.textContent = "正在连接…";
-  try {
-    await pair(endpoint, token);
-  } catch (error) {
-    status.textContent = error.message;
-    button.disabled = false;
-    return;
-  }
+function failed(error) {
+  status.textContent = error.message === "Failed to fetch" ?
+    "请先运行 python -m mmdl --source bookwalker --bw-serve，并确认服务端口。" : error.message;
+  button.disabled = false;
+}
 
-  async function send() {
-    try {
-      const session = await snapshot();
-      const response = await fetch(endpoint + "/session", {
-        method: "POST", headers: {"Content-Type": "application/json", "Authorization": "Bearer " + token},
-        body: JSON.stringify(session),
-      });
-      if (!response.ok) {
-        const {error} = await response.json();
-        throw new Error(error);
+async function start() {
+  const endpoint = "http://127.0.0.1:" + Number(port.value);
+  localStorage.setItem("bwPort", port.value);
+  button.disabled = true;
+  status.textContent = "正在启动当前卷的下载…";
+  try {
+    const session = await snapshot();
+    if (session.error) throw new Error(session.error);
+    reader.textContent = session.title;
+    const job = await request(endpoint, "/download", session);
+    let renewed = Date.now();
+
+    async function poll(current) {
+      status.textContent = current.message;
+      if (current.state === "done" || current.state === "error") {
+        button.disabled = false;
+        return;
       }
-      if (session.error) throw new Error(session.error);
-      reader.textContent = session.title;
-      status.textContent = "已连接，正在自动更新会话。下载完成后可以关闭本页。";
-      setTimeout(send, 20000);
-    } catch (error) {
-      status.textContent = error.message === "Failed to fetch" ? "下载器已退出或连接中断，请重新运行命令并配对。" : error.message;
-      button.disabled = false;
+      setTimeout(async () => {
+        try {
+          let session = null;
+          if (current.state === "downloading" && Date.now() - renewed >= 20000) {
+            session = await snapshot();
+            if (session.error) throw new Error(session.error);
+            renewed = Date.now();
+          }
+          await poll(await request(endpoint, "/jobs/" + current.job, {session}));
+        } catch (error) {
+          failed(error);
+        }
+      }, 2000);
     }
+    await poll(job);
+  } catch (error) {
+    failed(error);
   }
-  await send();
+}
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  start();
 });

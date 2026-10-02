@@ -8,14 +8,13 @@
 </head>
 <body>
   <main>
-    <h1>连接 BW 下载器</h1>
+    <h1>BW 一键下载</h1>
     <p id="reader">从已登录的 BW 阅读器标签页点击扩展打开此页。</p>
     <form id="connect">
-      <label>连接端口 <input id="port" type="number" min="1024" max="65535" value="19225" required></label>
-      <label>本次配对码 <input id="code" type="password" autocomplete="off" required></label>
-      <button id="button" type="submit">连接</button>
+      <label>服务端口 <input id="port" type="number" min="1024" max="65535" value="19225" required></label>
+      <button id="button" type="submit">开始下载</button>
     </form>
-    <p id="status" role="status">先运行下载命令，再填写命令窗口显示的配对码。</p>
+    <p id="status" role="status">点击“开始下载”下载当前卷。</p>
     <p class="note">连接期间保持本页和阅读器标签页打开。会话仅传给本机下载器，不保存到文件。</p>
   </main>
 </body>
