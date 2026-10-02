@@ -94,7 +94,7 @@ python -m mmdl --title 1 --chapters 1-20 --lang en
 python -m mmdl --title 1 --chapters 1-20 --lang en --epub
 
 # Create an EPUB from a title that was already downloaded
-python -m mmdl --epub-only "manga_million/One Piece" --lang en
+python -m mmdl --epub-only "manga_download/mangamillion/One Piece" --lang en
 
 # Pick a different source (Tongli — logs in automatically on first run)
 python -m mmdl --source tongli --title <volume-guid> --lang zh-TW
@@ -146,11 +146,11 @@ Use `--zip` or `--cbz` to export each downloaded chapter/volume separately. Arch
 python -m mmdl --source lightnovel --title <manga-id> --chapters 1-2 --cbz
 
 # Export existing chapter folders without API requests or login
-python -m mmdl --cbz-only "manga_million/One Piece"
-python -m mmdl --zip-only "manga_million/One Piece"
+python -m mmdl --cbz-only "manga_download/mangamillion/One Piece"
+python -m mmdl --zip-only "manga_download/mangamillion/One Piece"
 
 # Export both archive formats from an existing manga folder
-python -m mmdl --cbz-only "manga_million/One Piece" --zip
+python -m mmdl --cbz-only "manga_download/mangamillion/One Piece" --zip
 ```
 
 Original images are retained. Re-exporting replaces archives with the same chapter name and extension. `--epub-only`, `--zip-only`, and `--cbz-only` are mutually exclusive; use the corresponding download/export flags to request additional formats.
@@ -164,7 +164,7 @@ Original images are retained. Re-exporting replaces archives with the same chapt
 | `--title <id>` | Title ID for the selected source |
 | `--lang <code>` | Language: `en` / `ja` / `zh-CN` / ... |
 | `--chapters <n or a-b>` | Download one chapter or a range, including fractional chapters such as `10.5-12.5` |
-| `--output <dir>` | Output directory (default `manga_million`) |
+| `--output <dir>` | Output directory (default `manga_download/<source>`; an explicit directory is used directly) |
 | `--quality <q>` | Image quality: `middle` / `low` |
 | `--throttle <sec>` | Delay between page downloads (default `0.3`) |
 | `--epub` | After downloading, bundle the title into an EPUB |
@@ -180,16 +180,25 @@ Original images are retained. Re-exporting replaces archives with the same chapt
 
 ### Output layout
 
+Default downloads are grouped by source under `manga_download/<source>`. `--output <dir>` uses
+the specified directory directly; existing downloads can be moved to the matching source folder
+to keep using resume and offline export.
+
 ```
-manga_million/
-  One Piece/
-    #001 Chapter 1 Romance Dawn/
-      001.webp
-      002.webp
-      ...
-    #001 Chapter 1 Romance Dawn.zip
-    #001 Chapter 1 Romance Dawn.cbz
-  One Piece.epub
+manga_download/
+  mangamillion/
+    One Piece/
+      #001 Chapter 1 Romance Dawn/
+        001.webp
+        002.webp
+        ...
+      #001 Chapter 1 Romance Dawn.zip
+      #001 Chapter 1 Romance Dawn.cbz
+    One Piece.epub
+  bilibili/
+    <title>/
+  bookwalker/
+    <title>/
 ```
 
 ## How it works

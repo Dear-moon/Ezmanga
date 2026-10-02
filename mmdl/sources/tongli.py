@@ -21,7 +21,6 @@ class Tongli(BaseSource):
     lang_choices = None           # 无语言维度（本身是繁体中文）
     quality_choices = None
     capabilities = frozenset({"crawl"})   # 不对外 list（public 检索有限），按 bookID 抓取
-    default_output = "manga_million"
 
     def __init__(self, throttle=0.0, lang="zh-TW", book_group=None, token=None,
                  email=None, password=None):

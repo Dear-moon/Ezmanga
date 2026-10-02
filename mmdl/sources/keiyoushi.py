@@ -12,7 +12,6 @@ from mmdl.core.model import Title, Chapter, Page
 class Keiyoushi(BaseSource):
     name = "keiyoushi"
     display_name = "Keiyoushi extensions"
-    default_output = "manga_million"
     capabilities = frozenset({"crawl"})
     page_extensions = ("jpg", "png", "webp", "gif")
 

@@ -16,7 +16,6 @@ class Bilibili(BaseSource):
     quality_choices = None
     capabilities = frozenset({"crawl", "capture"})
     page_extensions = ("jpg", "png", "webp", "avif", "gif")
-    default_output = "manga_million"
 
     def __init__(self, throttle=0.0, lang="zh-CN", cdp_url="http://127.0.0.1:9222",
                  manga_name="", page_coords=None, bili_mode="http"):

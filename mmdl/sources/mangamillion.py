@@ -174,7 +174,6 @@ class MCMillion(BaseSource):
     lang_choices = ("en", "ja", "zh-CN", "zh-TW", "ko-KR", "fr", "de", "es", "pt-BR", "ru", "th", "vi", "id")
     quality_choices = ("middle", "low")
     capabilities = frozenset({"list", "crawl"})
-    default_output = "manga_million"
 
     def __init__(self, lang="en", throttle=0.3, token=None):
         super().__init__(throttle=throttle, lang=lang)

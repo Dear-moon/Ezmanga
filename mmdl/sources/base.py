@@ -11,6 +11,7 @@
 capabilities 声明源支持哪些能力，供 CLI 门控。
 """
 import abc
+from pathlib import Path
 
 from mmdl.core.http import HttpClient, HttpConfig
 from mmdl.core.model import Title, Chapter, Page, CaptureResult
@@ -19,7 +20,6 @@ from mmdl.core.model import Title, Chapter, Page, CaptureResult
 class BaseSource(abc.ABC):
     name: str = ""
     display_name: str = ""
-    default_output: str = "manga_million"
 
     # None = 忽略 --lang / --quality（源无该维度）
     lang_choices: tuple[str, ...] | None = None
@@ -32,6 +32,10 @@ class BaseSource(abc.ABC):
         self.throttle = throttle
         self.lang = lang
         self._client: HttpClient | None = None
+
+    @property
+    def default_output(self) -> str:
+        return str(Path("manga_download") / self.name)
 
     # ---- HTTP 配置（仅 crawl 源需要；浏览器辅助源如 bilibili/bookwalker 不适用，可忽略） ----
     def http_config(self) -> HttpConfig:

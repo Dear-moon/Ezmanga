@@ -25,7 +25,6 @@ class Kobo(BaseSource):
     lang_choices = None
     quality_choices = None
     capabilities = frozenset({"book"})
-    default_output = "manga_million"
 
     def __init__(self, throttle: float = 0.0, lang: str = "en",
                  cdp_url: str = DEFAULT_CDP_URL, cred_file=None):

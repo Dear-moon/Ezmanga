@@ -9,7 +9,6 @@ class BookWalker(BaseSource):
     lang_choices = None
     quality_choices = None
     capabilities = frozenset({"capture"})
-    default_output = "manga_million"
 
     def __init__(self, throttle=0.0, lang="ja", cdp_url="http://127.0.0.1:9222"):
         super().__init__(throttle=throttle, lang=lang)
