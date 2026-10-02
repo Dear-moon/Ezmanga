@@ -5,10 +5,12 @@
 环境变量，否则运行时从東立官网前端 JS 抓取（该 key 本就公开在官网）。resolve_access_token()：
 静态 token → 缓存 refresh 刷新 → 邮箱登录。密码不落盘。
 """
+import base64
 import getpass
 import json
 import os
 import re
+import time
 from pathlib import Path
 from configparser import ConfigParser
 
@@ -19,6 +21,12 @@ REFRESH_BASE = "https://securetoken.googleapis.com/v1/token"
 FIREBASE_JS = "https://ebook.tongli.com.tw/js/firebase_token.js"
 CRED_FILE = Path.home() / ".mmdl" / "tongli_refresh.json"
 TOKEN_KEY = "refresh_token"
+ID_TOKEN_KEY = "id_token"
+ID_EXP_KEY = "id_exp"
+
+# Reuse the cached idToken until it is within this window of expiry. Every refresh mints a new
+# token, and the backend counts each unseen token as a new device against the account's quota.
+_REFRESH_MARGIN = 300
 
 _KEY_CACHE = None
 
@@ -104,6 +112,44 @@ def save_refresh_token(refresh_token, path=CRED_FILE):
         pass
 
 
+def _jwt_exp(id_token):
+    """Read the `exp` claim of an idToken; 0 when unparsable."""
+    try:
+        payload = id_token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return int(json.loads(base64.urlsafe_b64decode(payload)).get("exp", 0))
+    except Exception:
+        return 0
+
+
+def load_cached_id_token(path=CRED_FILE):
+    """Return the cached idToken while it stays valid beyond the refresh margin, else ""."""
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+        tok = d.get(ID_TOKEN_KEY) or ""
+        exp = int(d.get(ID_EXP_KEY) or 0)
+    except Exception:
+        return ""
+    return tok if tok and exp - time.time() > _REFRESH_MARGIN else ""
+
+
+def save_id_token(id_token, path=CRED_FILE):
+    """Cache the idToken and its expiry, preserving the stored refresh token."""
+    p = Path(path)
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        d = {}
+    d[ID_TOKEN_KEY] = id_token
+    d[ID_EXP_KEY] = _jwt_exp(id_token)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(d), encoding="utf-8")
+    try:
+        os.chmod(p, 0o600)
+    except OSError:
+        pass
+
+
 def static_token():
     env = os.environ.get("TONG_LI_TOKEN", "").strip()
     if env:
@@ -132,19 +178,24 @@ def _login(email=None, password=None):
 
 
 def resolve_access_token(cli_token=None, email=None, password=None, cred_file=CRED_FILE):
-    """返回可用 idToken：静态优先 → 缓存 refresh 刷新 → 邮箱登录（首次）。"""
+    """Return a usable idToken: static -> unexpired cache -> refresh -> email login (first run)."""
     static = cli_token or static_token()
     if static:
         return static.strip()
+    cached = load_cached_id_token(cred_file)
+    if cached:
+        return cached
     rt = load_refresh_token(cred_file)
     if rt:
         try:
             idt, new_rt = refresh_access_token(rt)
             if new_rt != rt:
                 save_refresh_token(new_rt, cred_file)
+            save_id_token(idt, cred_file)
             return idt
         except Exception:
             pass   # refresh 失效，降级为交互登录
     idt, rt = _login(email=email, password=password)
     save_refresh_token(rt, cred_file)
+    save_id_token(idt, cred_file)
     return idt

@@ -130,7 +130,12 @@ def download_title(source, title_id, out_dir, *, lang=None, quality=None,
             extensions = getattr(source, "page_extensions", (ext,))
             if any(page_already_downloaded(ch_dir / f"{pno:03d}.{candidate}") for candidate in extensions):
                 continue
-            data = source.download_page(page, ch, lang=lang, quality=quality, client=client)
+            # A flaky page must not abort the whole title; the next run resumes it.
+            try:
+                data = source.download_page(page, ch, lang=lang, quality=quality, client=client)
+            except Exception as e:
+                print(f"    [fail] page {pno}: {e}")
+                continue
             if data:
                 fname = ch_dir / f"{pno:03d}.{page.ext or ext}"
                 _write_page(fname, data)
