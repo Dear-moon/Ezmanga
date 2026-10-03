@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Ezmanga Downloader</title>
+  <link rel="stylesheet" href="bridge.css">
+  <script src="bridge.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Ezmanga 下载器</h1>
+    <p id="reader">在书籍页面打开扩展，选择范围和格式后开始下载。</p>
+    <form id="connect">
+      <fieldset id="settings">
+      <label>服务端口 <input id="port" type="number" min="1024" max="65535" value="19225" required></label>
+      <label>来源
+        <select id="source" required>
+          <option value="">选择来源</option>
+          <option value="bookwalker">BookWalker</option>
+          <option value="bilibili">哔哩哔哩漫画</option>
+          <option value="tongli">东立</option>
+          <option value="lightnovel">轻书架</option>
+          <option value="mangamillion">MangaMillion</option>
+          <option value="kobo">Kobo</option>
+        </select>
+      </label>
+      <label>作品 ID / 链接 / ACSM 路径 <input id="title" type="text" required></label>
+      <p id="hint" class="note"></p>
+      <label>章节范围 <input id="chapters" type="text" placeholder="全部；可填 8 或 1-20"></label>
+      <label>语言（可选） <input id="lang" type="text" placeholder="使用来源默认语言"></label>
+      <label>质量（MangaMillion）
+        <select id="quality"><option value="">默认</option><option value="middle">middle</option><option value="low">low</option></select>
+      </label>
+      <div class="formats">
+        <label><input id="cbz" type="checkbox" checked> CBZ</label>
+        <label><input id="zip" type="checkbox"> ZIP</label>
+        <label><input id="epub" type="checkbox"> EPUB</label>
+      </div>
+      </fieldset>
+      <button id="button" type="submit">开始下载</button>
+    </form>
+    <p id="status" role="status">等待开始下载。</p>
+    <p class="note">下载时保持本页及原网站页面打开。网页登录态仅传给本机服务用于本次下载；本地 ACSM 仍需 ADE 授权。</p>
+  </main>
+</body>
+</html>

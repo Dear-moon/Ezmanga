@@ -31,6 +31,7 @@ class Kobo(BaseSource):
         super().__init__(throttle=throttle, lang=lang)
         self.cdp_url = cdp_url
         self.cred_file = cred_file or kobo_api.CRED_FILE
+        self.tokens = None
         self.adobe_account_dir = Path.home() / ".mmdl" / "adobe"   # anonymous (Adobe) activation state
 
     def http_config(self):
@@ -77,7 +78,7 @@ class Kobo(BaseSource):
         return CaptureResult(title=title, chapters=[chap])
 
     def _get_kepub(self, book_id, *, lang=None, quality=None) -> CaptureResult:
-        tokens = kobo_api.ensure_tokens(path=self.cred_file)
+        tokens = kobo_api.ensure_tokens(self.tokens, path=self.cred_file)
         kepub_bytes, content_keys = kobo_api.download_book(book_id, tokens=tokens, path=self.cred_file)
         device_id = kobo_drm.device_id(tokens.get("serial", ""), tokens.get("hashKey", kobo_drm.HASH_KEYS[0]))
         plain = kobo_drm.decrypt_kepub(kepub_bytes, device_id, tokens.get("userId", ""), content_keys)

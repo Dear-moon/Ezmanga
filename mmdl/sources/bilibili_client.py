@@ -31,12 +31,15 @@ def _json(value):
 
 
 class BilibiliClient:
-    def __init__(self):
+    def __init__(self, *, cookies=None, user_agent=None):
         self.profile = Path.home() / ".mmdl" / "bilibili_cookies.txt"
-        cookies = LWPCookieJar(str(self.profile))
-        if self.profile.is_file():
-            cookies.load(ignore_discard=True)
+        if cookies is None:
+            cookies = LWPCookieJar(str(self.profile))
+            if self.profile.is_file():
+                cookies.load(ignore_discard=True)
         self.session = requests.Session(impersonate="chrome", cookies=cookies)
+        if user_agent is not None:
+            self.session.headers["User-Agent"] = user_agent
         self.cache = Path.home() / ".mmdl" / "bilibili"
         self.cache.mkdir(parents=True, exist_ok=True)
         self.runtimes = {}

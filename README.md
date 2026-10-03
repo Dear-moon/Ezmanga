@@ -101,9 +101,9 @@ python -m mmdl --source tongli --title <volume-guid> --lang zh-TW
 # or pin a static token to skip auto-login:
 python -m mmdl --source tongli --title <volume-guid> --lang zh-TW --token "$TONG_LI_TOKEN"
 
-# BookWalker native: register the extension once, then start the local download service
-python -m mmdl --source bookwalker --setup
-python -m mmdl --source bookwalker --bw-serve
+# Browser extension: register once, then serve all implemented sources except Keiyoushi
+python -m mmdl --register-extension <extension-id>
+python -m mmdl --serve
 # Optional Canvas capture (PNG; needs logged-in debug browser on :9222)
 python -m mmdl --source bookwalker --url "https://viewer.bookwalker.jp/03/30/viewer.html?cid=<uuid>&cty=1" --bw-mode canvas --cbz
 
@@ -177,7 +177,9 @@ Original images are retained. Re-exporting replaces archives with the same chapt
 | `--token <t>` | Source auth token (Tongli Bearer or Light Novel Shelf refresh token) |
 | `--book-group <g>` | Source optional param (e.g. Tongli BookGroupID) |
 | `--setup` | One-time source setup (e.g. Kobo activation, Bilibili login, BW extension registration) |
-| `--bw-serve` | Run the local BW service; the extension's Start download button starts the current volume, with CBZ export by default |
+| `--serve` | Run the unified browser-extension download service (all implemented sources except Keiyoushi) |
+| `--register-extension <id>` | Register the local browser extension's public ID once |
+| `--port <n>` | Local download service port (default 19225) |
 | `--adobe-setup` | Import the machine's ADE device identity from the registry (Kobo `.acsm` fulfill) |
 
 ### Output layout
@@ -382,32 +384,92 @@ use the extension's chapter numbers. Downloaded pages are written to temporary f
 and moved into place only when complete, so interrupted writes are retried on resume. See
 [runtime/THIRD_PARTY.md](runtime/THIRD_PARTY.md) for version and license information.
 
+## Browser-extension download service
+
+Load [browser/ezmanga](browser/ezmanga) as an unpacked extension in Chrome/Edge. It appears as
+**Ezmanga Downloader**. When replacing the old BW-only extension, load this new directory and
+register the ID shown on the extensions page. Reload the extension after updating its files.
+
+Register its public ID once, then start one service for all six implemented non-Keiyoushi sources:
+
+```bash
+python -m mmdl --register-extension <extension-id>
+python -m mmdl --serve
+```
+
+Registration is stored in `~/.mmdl/browser_extension.json`. Open a book page and click the extension. Opening
+the extension does not download anything: choose the source, book, chapter range and export formats,
+then click **开始下载** (Start download). CBZ is checked by default; ZIP and EPUB are optional.
+Uncheck all formats to retain only the original page images. Images are always retained, and ZIP/CBZ
+files are exported per chapter/volume in the same title folder.
+
+| Source | Extension input | Download scope / authentication |
+| --- | --- | --- |
+| BookWalker | Current Japanese manga reader URL | Current volume; keep reader and extension tabs open for in-memory session refresh |
+| Bilibili | Comic ID, detail URL or reader URL | Detail pages use the selected range; reader URLs select the current chapter; current browser cookies |
+| Tongli | Book ID or official `/book?id=…` URL | Current volume by default; set a range for other volumes; current webpage's Firebase ID token |
+| Light Novel Shelf | Manga ID or `/manga/<id>` URL | Selected range, or all volumes; refresh token from current site's IndexedDB |
+| MangaMillion | Official title/chapter URL or numeric `original_title_id` | Selected range, or all chapters; current browser device token; optional language and `middle`/`low` quality |
+| Kobo | Content ID or local ACSM path | Whole book; open the extension from [ActivateOnWeb](https://auth.kobobooks.com/ActivateOnWeb) after completing its login; ACSM uses imported ADE identity |
+
+The unified extension/service flow has been tested with real BookWalker and purchased Bilibili
+chapter downloads. Tongli, Light Novel Shelf, MangaMillion and Kobo have not yet been verified
+end to end through this unified extension; their existing CLI validation is separate.
+
+The current page selects the source automatically for supported site domains. Kobo content IDs/ACSM
+paths must be entered explicitly. BW/Kobo download whole volumes, so their
+chapter-range input is disabled. Keep the extension status page open while downloading. The service
+processes one job at a time and stays available for the next source. Failed page downloads are reported
+as an incomplete job; restarting resumes existing images before exporting a complete archive.
+
+Clicking Start download reads the selected site's authorization from the browser containing the
+extension and passes it to the local service. Keep the original site tab open; BW and webpage tokens
+are refreshed while downloading. These credentials stay in memory for the job and are released on
+completion; extension downloads do not load or overwrite CLI login caches. Missing browser authorization
+requires signing in on the website. Bilibili guest cookies can still download available free chapters.
+Kobo's activation adapter reads the completed workflow's `userkey` and registers a device in memory.
+It has not been verified with a live account; ordinary storefront cookies are not a Kobo device token.
+Local ACSM downloads still require the existing ADE identity import.
+CLI authentication workflows remain available independently. Keiyoushi remains CLI-only.
+Readmoo is still a design specification.
+
+Bilibili login cookies belong to `.bilibili.com`, so the extension also declares permission for
+the parent domain. If an older extension reports `GetImageIndex failed: code=1` for a chapter
+you can fully read on the website, reload the extension at `chrome://extensions` or
+`edge://extensions`, close the old download-status tab, and reopen the extension from the reader.
+
+The service binds to `127.0.0.1` and accepts only the registered extension's origin. Use Ctrl+C to stop.
+`--port <n>` changes its port; enter the same port in the extension. Its port setting is remembered.
+With `--serve`, `--output <root>` groups downloads under `<root>/<source>/<title>`; the default is
+`manga_download/<source>/<title>`. `--throttle` sets the page interval. Existing CLI downloads and
+their `--output` semantics remain available. The former `--bw-serve`/`--bw-port` flags are replaced by
+`--serve`/`--port`.
+
 ## BookWalker Japan download modes
 
 Open the extension from the BW reader and click **开始下载** (Start download) to begin a native
 download. Opening the extension alone does not start downloading. The local service restores
 page resources to JPG. Native downloads use your ordinary logged-in
-Chrome/Edge browser through the helper extension in [browser/bookwalker](browser/bookwalker).
+Chrome/Edge browser through the helper extension in [browser/ezmanga](browser/ezmanga).
 They do not require a debugging port, a separate browser profile, or Java.
 
 One-time setup: open `chrome://extensions` or `edge://extensions`, enable developer mode,
-choose **Load unpacked**, and select the `browser/bookwalker` directory. Then run
-`python -m mmdl --source bookwalker --setup` and enter the extension's ID from the extensions page.
-Registration stores that public ID in `~/.mmdl/bookwalker_extension.json`. This developer-mode
+choose **Load unpacked**, and select the `browser/ezmanga` directory. Then run
+`python -m mmdl --register-extension <extension-id>` using the ID from the extensions page.
+Registration stores that public ID in `~/.mmdl/browser_extension.json`. This developer-mode
 switch installs the local extension; it does not enable browser remote debugging. After updating
 the extension files, use **Reload** on the extensions page.
 
 For each download:
 
-1. Run `python -m mmdl --source bookwalker --bw-serve` once and leave it running.
+1. Run `python -m mmdl --serve` once and leave it running.
 2. Open the requested BW manga reader in your already logged-in browser, then click
-   **Ezmanga BW**, then **开始下载** (Start download). No pairing code is required.
+   **Ezmanga Downloader**, then **开始下载** (Start download). No pairing code is required.
 3. Keep the reader and download-status tabs open until it finishes. The service stays available
    for the next volume; it processes one volume at a time.
 
-The default output is `manga_download/bookwalker/<title>` with one CBZ per volume. The service
-supports `--output`, `--throttle`, `--zip`, `--cbz`, and `--epub`; `--zip` selects ZIP instead of
-the default CBZ, and `--zip --cbz` exports both. Use the actual reader URL/tab: the product page's
+The default output is `manga_download/bookwalker/<title>` with one CBZ per volume. Select ZIP/CBZ/EPUB
+in the extension; the service accepts `--output` and `--throttle`. Use the actual reader URL/tab: the product page's
 ID can differ from the reader's `cid`.
 
 The helper reads cookies applicable to the selected BW reader/API and runs the website's
@@ -415,7 +477,7 @@ authorization script in that reader tab. It sends updated sessions every 20 seco
 service bound to `127.0.0.1`. It accepts requests only from the registered extension's browser
 origin and keeps account cookies in memory for the current download. Session updates must match
 that download's reader. Use Ctrl+C to stop the service. If the default port is occupied, use
-`--bw-port <port>` and enter that port in the helper; the helper remembers the port.
+`--port <port>` and enter that port in the helper; the helper remembers the port.
 
 BW HTTP requests retry TLS handshake failures (`curl 35`) up to twice, waiting one second before
 the first retry and two seconds before the second. Other errors are reported without retrying.

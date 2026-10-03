@@ -95,7 +95,7 @@ def write_capture(source, result, out_dir, *, epub=False, lang=None):
 
 
 def download_title(source, title_id, out_dir, *, lang=None, quality=None,
-                   chapter_range=None, throttle=0.3, epub=False):
+                   chapter_range=None, throttle=0.3, epub=False, chapter_ids=None):
     """crawl 轨主入口：按 title_id 下载整部。返回 (title_dir, title)。"""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -106,6 +106,8 @@ def download_title(source, title_id, out_dir, *, lang=None, quality=None,
     print(f"[title] {title.name} by {title.author or 'Unknown'}")
 
     chapters = source.get_chapters(title_id, lang=lang, quality=quality)
+    if chapter_ids is not None:
+        chapters = [c for c in chapters if c.id in chapter_ids]
     if chapter_range:
         lo, hi = chapter_range
         chapters = [c for c in chapters if lo <= _num(c.number) <= hi]
@@ -139,6 +141,8 @@ def download_title(source, title_id, out_dir, *, lang=None, quality=None,
             if data:
                 fname = ch_dir / f"{pno:03d}.{page.ext or ext}"
                 _write_page(fname, data)
+                if pno == 1 or pno % 10 == 0 or pno == len(pages):
+                    print(f"    page {pno}/{len(pages)} ok")
             else:
                 print(f"    [fail] page {pno}")
             time.sleep(throttle)

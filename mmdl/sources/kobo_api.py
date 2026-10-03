@@ -107,6 +107,10 @@ def setup(cdp_url=DEFAULT_CDP_URL, path=CRED_FILE) -> dict:
         userkey = _wait_for_userkey(client)
     finally:
         client.close()
+    return activate(userkey, path=path)
+
+
+def activate(userkey, path=CRED_FILE):
     serial = os.environ.get("KOBO_SERIAL", f"MMDL-{int(time.time())}")
     data = _register_device(userkey, serial)
     tokens = {
@@ -122,7 +126,8 @@ def setup(cdp_url=DEFAULT_CDP_URL, path=CRED_FILE) -> dict:
         or data.get("accessTokenExpiry")
         or data.get("expiresIn", "") or "",
     }
-    save_tokens(tokens, path)
+    if path is not None:
+        save_tokens(tokens, path)
     return tokens
 
 
@@ -151,7 +156,8 @@ def _expired(tokens):
 
 def ensure_tokens(tokens=None, path=CRED_FILE) -> dict:
     """Ensure a usable accessToken: load → /auth/refresh if expired → write back."""
-    tokens = tokens or load_tokens(path)
+    if tokens is None:
+        tokens = load_tokens(path)
     if tokens.get("accessToken") and not _expired(tokens):
         return tokens
     if not tokens.get("refreshToken"):
@@ -167,7 +173,8 @@ def ensure_tokens(tokens=None, path=CRED_FILE) -> dict:
     tokens["accessToken"] = data.get("AccessToken") or data.get("accessToken") or tokens["accessToken"]
     tokens["refreshToken"] = data.get("RefreshToken") or data.get("refreshToken") or tokens["refreshToken"]
     tokens["expiresAt"] = data.get("AccessTokenExpiry") or data.get("accessTokenExpiry") or ""
-    save_tokens(tokens, path)
+    if path is not None:
+        save_tokens(tokens, path)
     return tokens
 
 

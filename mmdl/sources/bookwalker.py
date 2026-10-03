@@ -14,11 +14,10 @@ class BookWalker(BaseSource):
         super().__init__(throttle=throttle, lang=lang)
         self.cdp_url = cdp_url
         self.bw_mode = "native"
-        self.bw_port = 19225
 
     def setup(self):
-        from .bookwalker_browser import register_extension
-        register_extension(input("Ezmanga BW 扩展 ID：").strip())
+        from mmdl.core.download_service import register_extension
+        register_extension(input("Ezmanga 扩展 ID：").strip())
 
     def http_config(self):
         raise NotImplementedError("BookWalker is browser-based; no HTTP config.")
@@ -52,7 +51,7 @@ class BookWalker(BaseSource):
             return self._capture_canvas(url, lang=lang, quality=quality, **kw)
         bridge = kw.get("browser_session")
         if bridge is None:
-            raise RuntimeError("Start --source bookwalker --bw-serve, then click Start download in the Ezmanga BW extension")
+            raise RuntimeError("Start --serve, then click Start download in the Ezmanga extension")
         return self._capture_native(url, bridge)
 
     def _capture_native(self, url, bridge):

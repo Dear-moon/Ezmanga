@@ -1,9 +1,7 @@
 """CLI 编排：--source 路由 + capability 门控 + 按 source 校验 lang/quality。"""
 import argparse
-from decimal import Decimal
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -11,18 +9,14 @@ from .sources import SOURCES, get_source
 from .core.epub import build_epub
 from .core.archive import build_archives
 from .core.driver import download_title, write_capture
+from .core.naming import parse_chapter_range
 
 
 def _parse_chapter_range(value):
-    number = r"(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)"
-    match = re.fullmatch(r"\s*(" + number + r")(?:\s*-\s*(" + number + r"))?\s*", value)
-    if match is None:
-        raise argparse.ArgumentTypeError("章节范围应为 1、1-20 或 10.5-12.5")
-    start = Decimal(match.group(1))
-    end = Decimal(match.group(2)) if match.group(2) is not None else start
-    if start > end:
-        raise argparse.ArgumentTypeError("章节范围起点不能大于终点")
-    return start, end
+    try:
+        return parse_chapter_range(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def build_parser():
@@ -39,8 +33,10 @@ def build_parser():
     ap.add_argument("--chapters", type=_parse_chapter_range, help="单章或章节范围，如 1 / 1-20 / 10.5-12.5")
     ap.add_argument("--url", help="阅读器 URL（如 BookWalker reader）")
     ap.add_argument("--bw-mode", choices=("native", "canvas"), help="BookWalker 下载方式（默认 native 本地还原；canvas 提取已绘制页面）")
-    ap.add_argument("--bw-port", type=int, help="BW 辅助扩展连接端口（默认 19225）")
-    ap.add_argument("--bw-serve", action="store_true", help="启动 BW 本机下载服务，供浏览器扩展一键下载")
+    service = ap.add_mutually_exclusive_group()
+    service.add_argument("--serve", action="store_true", help="启动统一下载服务，供浏览器扩展调用（不含 Keiyoushi）")
+    service.add_argument("--register-extension", metavar="ID", help="注册 Ezmanga 浏览器扩展 ID")
+    ap.add_argument("--port", type=int, default=19225, help="统一下载服务端口（默认 19225）")
     ap.add_argument("--bili-mode", choices=("http", "canvas"), help="B 漫下载方式（默认 http；canvas 使用调试浏览器）")
     ap.add_argument("--output", default=None, help="输出目录")
     ap.add_argument("--throttle", type=float, default=0.3, help="单页下载间隔秒数")
@@ -105,10 +101,8 @@ def _validate(source, args):
                                  or args.epub_only or args.zip_only or args.cbz_only):
         raise SystemExit("[error] 设置导入不能与安装、初始化或离线导出同时使用")
 
-    if (args.bw_mode is not None or args.bw_port is not None or args.bw_serve) and source.name != "bookwalker":
-        raise SystemExit("[error] --bw-mode/--bw-port/--bw-serve 需要 --source bookwalker")
-    if args.bw_serve and (args.setup or args.url or args.title or args.list or args.epub_only or args.zip_only or args.cbz_only or args.bw_mode == "canvas"):
-        raise SystemExit("[error] --bw-serve 不能与下载、初始化、离线导出或 canvas 模式同时使用")
+    if args.bw_mode is not None and source.name != "bookwalker":
+        raise SystemExit("[error] --bw-mode 需要 --source bookwalker")
     if args.bili_mode is not None and source.name != "bilibili":
         raise SystemExit("[error] --bili-mode 需要 --source bilibili")
     if source.name == "bilibili" and source.bili_mode == "canvas" and args.title:
@@ -135,6 +129,22 @@ def _validate(source, args):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.serve or args.register_extension:
+        if (args.title or args.url or args.list or args.setup or args.adobe_setup or args.epub_only
+                or args.zip_only or args.cbz_only or args.extension or args.search is not None
+                or args.bw_mode or args.bili_mode or args.chapters or args.token or args.book_group
+                or args.lang or args.quality or args.epub or args.zip or args.cbz or args.source != "mangamillion"
+                or args.extensions or args.installed_extensions or args.extension_sources
+                or args.install_extension or args.update_extensions or args.extension_source
+                or args.source_preferences or args.preferences_file or args.source_filters or args.filters_file
+                or args.page != 1):
+            raise SystemExit("[error] 服务/扩展注册不能与源下载或账号配置参数同时使用")
+        from .core.download_service import register_extension, serve_downloads
+        if args.register_extension:
+            register_extension(args.register_extension)
+        else:
+            serve_downloads(port=args.port, out_dir=args.output, throttle=args.throttle)
+        return
     source = get_source(args.source)
     try:
         return _run(source, args)
@@ -152,8 +162,6 @@ def _run(source, args):
         source.throttle = args.throttle
         if args.bw_mode is not None:
             source.bw_mode = args.bw_mode
-        if args.bw_port is not None:
-            source.bw_port = args.bw_port
     if source.name == "keiyoushi":
         source.extension = args.extension
         source.extension_source = args.extension_source
@@ -202,12 +210,6 @@ def _run(source, args):
         return
 
     out_dir = args.output or source.default_output
-
-    if args.bw_serve:
-        from .sources.bookwalker_browser import serve_downloads
-        formats = tuple(extension for extension, enabled in (("zip", args.zip), ("cbz", args.cbz)) if enabled)
-        serve_downloads(source, out_dir, epub=args.epub, archive_formats=formats or ("cbz",))
-        return
 
     # capture 轨（延后，BookWalker）
     if args.url and not (source.name == "bilibili" and source.bili_mode == "http"):

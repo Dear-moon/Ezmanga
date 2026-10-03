@@ -178,6 +178,7 @@ class MCMillion(BaseSource):
     def __init__(self, lang="en", throttle=0.3, token=None):
         super().__init__(throttle=throttle, lang=lang)
         self._token = token
+        self.browser_session = False
         self._view_meta = {}  # chapter_id -> {pages, aesKey, aesIv} 缓存（viewer 拉取结果）
 
     def http_config(self) -> HttpConfig:
@@ -221,7 +222,7 @@ class MCMillion(BaseSource):
             self._register(client)
         for attempt in range(2):
             st, body = client.request(API_HOST, method, path, params=params)
-            if st == 403 and attempt == 0:
+            if st == 403 and attempt == 0 and not self.browser_session:
                 time.sleep(0.5)
                 self._register(client)
                 continue
