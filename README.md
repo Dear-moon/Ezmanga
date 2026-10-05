@@ -466,7 +466,10 @@ For each download:
 2. Open the requested BW manga reader in your already logged-in browser, then click
    **Ezmanga Downloader**, then **开始下载** (Start download). No pairing code is required.
 3. Keep the reader and download-status tabs open until it finishes. The service stays available
-   for the next volume; it processes one volume at a time.
+   for the next volume; it runs up to two download tasks at a time.
+
+Start each book from its own reader and download-status tabs. Progress and browser-session updates
+stay separate for each task. Starting the same source/title again is rejected while it is downloading.
 
 The default output is `manga_download/bookwalker/<title>` with one CBZ per volume. Select ZIP/CBZ/EPUB
 in the extension; the service accepts `--output` and `--throttle`. Use the actual reader URL/tab: the product page's

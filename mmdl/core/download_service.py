@@ -1,5 +1,5 @@
 """Local download service restricted to the registered browser extension."""
-from contextlib import redirect_stdout
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from http.cookiejar import Cookie, CookieJar
 import json
@@ -19,6 +19,24 @@ from mmdl.sources import get_source
 
 PROFILE = Path.home() / ".mmdl" / "browser_extension.json"
 SERVICE_SOURCES = ("mangamillion", "tongli", "bookwalker", "bilibili", "kobo", "lightnovel")
+MAX_ACTIVE_JOBS = 2
+_OUTPUT_LOCK = threading.Lock()
+
+
+class _JobOutput:
+    def __init__(self, console):
+        self.console = console
+        self.targets = threading.local()
+        self.users = 0
+
+    def write(self, text):
+        return getattr(self.targets, "job", self.console).write(text)
+
+    def flush(self):
+        getattr(self.targets, "job", self.console).flush()
+
+    def __getattr__(self, name):
+        return getattr(self.console, name)
 
 
 def register_extension(extension_id):
@@ -101,7 +119,8 @@ class DownloadJob:
         self.state = "downloading"
         self.message = "正在读取作品信息…"
         self.output = ""
-        self.console = sys.stdout
+        console = sys.stdout
+        self.console = console.console if isinstance(console, _JobOutput) else console
         self.buffer = ""
         self.failures = 0
 
@@ -176,13 +195,32 @@ class DownloadJob:
     def flush(self):
         self.console.flush()
 
+    @contextmanager
+    def capture_output(self):
+        # stdout redirection is process-wide, so overlapping jobs share one thread-aware router.
+        with _OUTPUT_LOCK:
+            output = sys.stdout
+            if not isinstance(output, _JobOutput):
+                output = _JobOutput(output)
+                sys.stdout = output
+            output.users += 1
+            output.targets.job = self
+        try:
+            yield
+        finally:
+            with _OUTPUT_LOCK:
+                del output.targets.job
+                output.users -= 1
+                if output.users == 0:
+                    sys.stdout = output.console
+
     def run(self, out_dir, throttle):
         source = self.source
         source.throttle = throttle
         out_dir = Path(out_dir) / source.name if out_dir is not None else source.default_output
         epub = "epub" in self.formats
         try:
-            with redirect_stdout(self):
+            with self.capture_output():
                 self.authorize()
                 if source.name == "bookwalker":
                     result = source.capture_from_url(self.title_id, browser_session=self)
@@ -229,7 +267,7 @@ def serve_downloads(*, port=19225, out_dir=None, throttle=0.3):
     extension_id = json.loads(PROFILE.read_text(encoding="utf-8"))["extension_id"]
     allowed_origin = "chrome-extension://" + extension_id
     jobs = {}
-    active_thread = None
+    active_threads = {}
 
     class Handler(BaseHTTPRequestHandler):
         def respond(self, status, result):
@@ -257,20 +295,27 @@ def serve_downloads(*, port=19225, out_dir=None, throttle=0.3):
                 self.respond(200, {})
 
         def do_POST(self):
-            nonlocal active_thread
+            nonlocal active_threads
             if not self.authorized():
                 return
             try:
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 if self.path == "/download":
-                    if active_thread is not None and active_thread.is_alive():
-                        self.respond(409, {"error": "已有下载正在进行，请等待完成"})
+                    active_threads = {key: thread for key, thread in active_threads.items() if thread.is_alive()}
+                    if len(active_threads) >= MAX_ACTIVE_JOBS:
+                        self.respond(409, {"error": f"最多同时下载 {MAX_ACTIVE_JOBS} 个任务，请等待其中一个完成"})
                         return
                     job = DownloadJob(payload)
+                    identity = (job.source_name, job.reader or job.title_id)
+                    if any((jobs[key].source_name, jobs[key].reader or jobs[key].title_id) == identity
+                           for key in active_threads):
+                        self.respond(409, {"error": "该作品已有下载任务，请等待完成"})
+                        return
                     job_id = secrets.token_hex(8)
                     jobs[job_id] = job
-                    active_thread = threading.Thread(target=job.run, args=(out_dir, throttle), daemon=True)
-                    active_thread.start()
+                    thread = threading.Thread(target=job.run, args=(out_dir, throttle), daemon=True)
+                    active_threads[job_id] = thread
+                    thread.start()
                 elif self.path.startswith("/jobs/"):
                     job_id = self.path.removeprefix("/jobs/")
                     job = jobs[job_id]
