@@ -20,7 +20,7 @@ function selectionChanged() {
   hint.textContent = {
     bookwalker: "请使用当前已打开的 BW 日本版漫画阅读器链接。",
     bilibili: "支持漫画详情或阅读器链接；阅读器链接默认只下载当前话。",
-    tongli: "支持作品 ID 或官网书籍链接；留空范围默认下载当前卷。",
+    tongli: "支持作品 ID、官网书籍或阅读器链接；留空范围默认下载当前卷。",
     lightnovel: "支持漫画 ID 或 https://www.lightnovel.app/manga/<id> 链接。",
     mangamillion: "支持作品链接或 original_title_id 数字 ID，使用当前浏览器设备授权。",
     kobo: "填写 content-id；在 auth.kobobooks.com/ActivateOnWeb 完成扫码登录后打开扩展。ACSM 仍使用本地 ADE 授权。",

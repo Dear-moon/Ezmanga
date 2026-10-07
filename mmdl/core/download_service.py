@@ -68,9 +68,10 @@ def resolve_title(source, value):
     elif source.name == "lightnovel":
         value = str(source._book_id(value))
     elif source.name == "tongli" and address.scheme:
-        if address.scheme != "https" or address.hostname != "ebook.tongli.com.tw" or address.path != "/book":
-            raise ValueError("东立需要作品 ID 或官网 /book 链接")
-        value = parse_qs(address.query)["id"][0]
+        if address.scheme != "https" or address.hostname != "ebook.tongli.com.tw" or address.path not in {"/book", "/reader/v2/index.html"}:
+            raise ValueError("东立需要作品 ID、官网 /book 或阅读器链接")
+        parameter = "bookID" if address.path == "/reader/v2/index.html" else "id"
+        value = parse_qs(address.query)[parameter][0]
     elif source.name == "mangamillion":
         if address.scheme:
             match = re.fullmatch(r"/[^/]+/title/(\d+)(?:/chapter/\d+)?/?", address.path)
