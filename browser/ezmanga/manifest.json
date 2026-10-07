@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Ezmanga Downloader",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "minimum_chrome_version": "109",
-  "description": "从书籍页面调用本机 Ezmanga 服务下载漫画，支持 BW、B 漫、东立、轻书架、MangaMillion 和 Kobo。",
+  "description": "从书籍页面调用本机 Ezmanga 服务下载漫画，支持 BW、B 漫、东立、Pixiv Comic、轻书架、MangaMillion 和 Kobo。",
   "permissions": ["activeTab", "cookies", "scripting"],
   "host_permissions": [
     "https://viewer.bookwalker.jp/*",
@@ -13,6 +13,8 @@
     "https://api.bilibili.com/*",
     "*://bilibili.com/*",
     "https://ebook.tongli.com.tw/*",
+    "https://comic.pixiv.net/*",
+    "https://comic-store-viewer.pixiv.net/*",
     "https://www.lightnovel.app/*",
     "https://lightnovel.app/*",
     "https://mangamillion.shueisha.co.jp/*",

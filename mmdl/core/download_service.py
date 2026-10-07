@@ -18,7 +18,7 @@ from mmdl.sources import get_source
 
 
 PROFILE = Path.home() / ".mmdl" / "browser_extension.json"
-SERVICE_SOURCES = ("mangamillion", "tongli", "bookwalker", "bilibili", "kobo", "lightnovel")
+SERVICE_SOURCES = ("mangamillion", "tongli", "bookwalker", "bilibili", "kobo", "lightnovel", "pixivcomic")
 MAX_ACTIVE_JOBS = 2
 _OUTPUT_LOCK = threading.Lock()
 
@@ -67,6 +67,8 @@ def resolve_title(source, value):
         source._ids(value)
     elif source.name == "lightnovel":
         value = str(source._book_id(value))
+    elif source.name == "pixivcomic":
+        value = source.normalize(value)
     elif source.name == "tongli" and address.scheme:
         if address.scheme != "https" or address.hostname != "ebook.tongli.com.tw" or address.path not in {"/book", "/reader/v2/index.html"}:
             raise ValueError("东立需要作品 ID、官网 /book 或阅读器链接")
@@ -156,7 +158,9 @@ class DownloadJob:
         self.payload = payload
 
     def authorize(self):
-        if self.source_name == "bilibili":
+        if self.source_name == "pixivcomic":
+            self.source.browser_session = self
+        elif self.source_name == "bilibili":
             from mmdl.sources.bilibili_client import BilibiliClient
             cookies = CookieJar()
             for item in self.payload["cookies"]:

@@ -27,6 +27,7 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `bilibili` | ✅ implemented | anonymous or QR-login HTTP; browser for Canvas mode | Python/WASM API and image decryption; optional browser Canvas capture |
 | `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `lightnovel` | ✅ implemented | Light Novel Shelf refresh token | Pure HTTP SignalR LongPolling, paginated comics, WebP images |
+| `pixivcomic` | ✅ implemented | none for readable episodes; browser cookies for store/purchased content | Python HTTP, time/salt signature, original episode images and Publus store volumes |
 | `keiyoushi` | ✅ initial support | extension-dependent | Local JDK 25+, on-demand stdio host, official API 1.6 JARs |
 | `readmoo` | ⏳ planned | Readmoo desktop app | Planned source |
 
@@ -384,13 +385,28 @@ use the extension's chapter numbers. Downloaded pages are written to temporary f
 and moved into place only when complete, so interrupted writes are retried on resume. See
 [runtime/THIRD_PARTY.md](runtime/THIRD_PARTY.md) for version and license information.
 
+## Pixiv Comic
+
+The native `pixivcomic` source follows the [Keiyoushi Pixiv Comic protocol](https://github.com/keiyoushi/extensions-source/tree/main/src/ja/pixivcomic) (Apache-2.0), using existing `curl_cffi`, Pillow and Publus decoding dependencies. No JVM is required.
+
+```bash
+python -m mmdl --source pixivcomic --title "https://comic.pixiv.net/works/<work-id>" --chapters 1 --cbz
+python -m mmdl --source pixivcomic --title "https://comic.pixiv.net/viewer/stories/<episode-id>" --cbz
+```
+
+Work links select currently readable serialized episodes. Store product links (`/store/products/<product-key>`) select purchased or free volumes; store volume links (`/store/viewers/<sku>/master`) select that volume. Episode/volume numbers are parsed from their labels; non-numbered entries use their position. Series and store downloads are separate so their ranges do not overlap.
+
+For authenticated content, open its page in the logged-in browser and use the extension. Cookies and signatures remain in memory. Store volumes reuse the existing Publus configuration decoder and image restoration with unhashed image filenames. Unavailable content fails with a login/purchase message. Free episode and authenticated store-reader downloads have been validated end to end; authorization, Cookie refresh and Publus image-path handling also have focused mocked checks.
+
+The service saves downloads under `manga_download/pixivcomic/<title>`; ZIP/CBZ are exported per chapter/volume and EPUB contains images. Existing page resume behavior applies. Direct volume viewer links use the volume identifier as the local title. Reload the extension to grant the new Pixiv host permissions.
+
 ## Browser-extension download service
 
 Load [browser/ezmanga](browser/ezmanga) as an unpacked extension in Chrome/Edge. It appears as
 **Ezmanga Downloader**. When replacing the old BW-only extension, load this new directory and
 register the ID shown on the extensions page. Reload the extension after updating its files.
 
-Register its public ID once, then start one service for all six implemented non-Keiyoushi sources:
+Register its public ID once, then start one service for all seven implemented non-Keiyoushi sources:
 
 ```bash
 python -m mmdl --register-extension <extension-id>
@@ -407,7 +423,8 @@ files are exported per chapter/volume in the same title folder.
 | --- | --- | --- |
 | BookWalker | Current Japanese manga reader URL | Current volume; keep reader and extension tabs open for in-memory session refresh |
 | Bilibili | Comic ID, detail URL or reader URL | Detail pages use the selected range; reader URLs select the current chapter; current browser cookies |
-| Tongli | Book ID or official `/book?id=…` URL | Current volume by default; set a range for other volumes; current webpage's Firebase ID token |
+| Pixiv Comic | Work ID, work/episode URL, store product or volume viewer URL | Readable serialized episodes; current episode for story readers; purchased/free volumes for store products; browser cookies |
+| Tongli | Book ID, `/book?id=…` or `/reader/v2/index.html?bookID=…` URL | Current volume by default; set a range for other volumes; current webpage's Firebase ID token |
 | Light Novel Shelf | Manga ID or `/manga/<id>` URL | Selected range, or all volumes; refresh token from current site's IndexedDB |
 | MangaMillion | Official title/chapter URL or numeric `original_title_id` | Selected range, or all chapters; current browser device token; optional language and `middle`/`low` quality |
 | Kobo | Content ID or local ACSM path | Whole book; open the extension from [ActivateOnWeb](https://auth.kobobooks.com/ActivateOnWeb) after completing its login; ACSM uses imported ADE identity |

@@ -21,6 +21,7 @@ function selectionChanged() {
     bookwalker: "请使用当前已打开的 BW 日本版漫画阅读器链接。",
     bilibili: "支持漫画详情或阅读器链接；阅读器链接默认只下载当前话。",
     tongli: "支持作品 ID、官网书籍或阅读器链接；留空范围默认下载当前卷。",
+    pixivcomic: "作品链接下载可读连载；单话阅读器下载当前话；商店链接下载已购或免费卷。",
     lightnovel: "支持漫画 ID 或 https://www.lightnovel.app/manga/<id> 链接。",
     mangamillion: "支持作品链接或 original_title_id 数字 ID，使用当前浏览器设备授权。",
     kobo: "填写 content-id；在 auth.kobobooks.com/ActivateOnWeb 完成扫码登录后打开扩展。ACSM 仍使用本地 ADE 授权。",
@@ -42,6 +43,8 @@ async function initialize() {
     "viewer-df.bookwalker.jp": "bookwalker",
     "manga.bilibili.com": "bilibili",
     "ebook.tongli.com.tw": "tongli",
+    "comic.pixiv.net": "pixivcomic",
+    "comic-store-viewer.pixiv.net": "pixivcomic",
     "www.lightnovel.app": "lightnovel",
     "lightnovel.app": "lightnovel",
     "mangamillion.shueisha.co.jp": "mangamillion",
@@ -91,6 +94,7 @@ async function siteSession(name) {
   const address = new URL(location.href);
   const sites = {
     bilibili: ["manga.bilibili.com"], tongli: ["ebook.tongli.com.tw"],
+    pixivcomic: ["comic.pixiv.net", "comic-store-viewer.pixiv.net"],
     lightnovel: ["www.lightnovel.app", "lightnovel.app"],
     mangamillion: ["mangamillion.shueisha.co.jp"], kobo: ["auth.kobobooks.com"],
   };
@@ -154,13 +158,14 @@ async function snapshot(name) {
     func: name === "bookwalker" ? readerSession : siteSession, args: [name],
   });
   if (result.error) return result;
-  if (name !== "bookwalker" && name !== "bilibili") return result;
+  if (!["bookwalker", "bilibili", "pixivcomic"].includes(name)) return result;
   const address = new URL(result.readerUrl);
   const path = address.hostname === "viewer-trial.bookwalker.jp" ? "/trial-page/c" :
     address.hostname === "viewer-df.bookwalker.jp" ? "/browserWebApi4/c" : "/browserWebApi/c";
   const stores = await chrome.cookies.getAllCookieStores();
   const storeId = stores.find((store) => store.tabIds.includes(readerTab)).id;
   const urls = name === "bilibili" ? [result.readerUrl, "https://api.bilibili.com/"] :
+    name === "pixivcomic" ? [result.readerUrl, "https://comic.pixiv.net/", "https://comic-store-viewer.pixiv.net/api/c"] :
     [result.readerUrl, address.origin + path];
   const cookies = new Map();
   for (const url of urls) {
@@ -219,7 +224,7 @@ async function start() {
       setTimeout(async () => {
         try {
           let session = null;
-          if (["bookwalker", "tongli", "lightnovel", "mangamillion"].includes(name) &&
+          if (["bookwalker", "tongli", "lightnovel", "mangamillion", "pixivcomic"].includes(name) &&
               current.state === "downloading" && Date.now() - renewed >= 20000) {
             session = await snapshot(name);
             if (session.error) throw new Error(session.error);
