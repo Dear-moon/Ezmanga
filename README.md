@@ -28,6 +28,7 @@ Multi-source manga downloader built around [MANGA MILLION](https://mangamillion.
 | `kobo` | ✅ implemented | Kobo web activation · ADE import | **book** track: fetch whole `.kepub` + Obok decrypt. Adobe ADE: `.acsm` fulfill (Auth/InitLicenseService/Fulfill) + ADEPT content-decrypt. **not** in Actions |
 | `lightnovel` | ✅ implemented | Light Novel Shelf refresh token | Pure HTTP SignalR LongPolling, paginated comics, WebP images |
 | `pixivcomic` | ✅ implemented | none for readable episodes; browser cookies for store/purchased content | Python HTTP, time/salt signature, original episode images and Publus store volumes |
+| `bilimanga` | ✅ implemented | none for public chapters; optional browser cookies | Mobile HTTP, volume downloads and lossless AVIF-to-WebP conversion |
 | `keiyoushi` | ✅ initial support | extension-dependent | Local JDK 25+, on-demand stdio host, official API 1.6 JARs |
 | `readmoo` | ⏳ planned | Readmoo desktop app | Planned source |
 
@@ -385,6 +386,21 @@ use the extension's chapter numbers. Downloaded pages are written to temporary f
 and moved into place only when complete, so interrupted writes are retried on resume. See
 [runtime/THIRD_PARTY.md](runtime/THIRD_PARTY.md) for version and license information.
 
+## BiliManga
+
+The native `bilimanga` source follows the [Keiyoushi BiliManga protocol](https://github.com/keiyoushi/extensions-source/tree/main/src/zh/bilimanga) (Apache-2.0). It uses a mobile User-Agent, the site's reader-mode cookie and image Referer automatically; changing browser device emulation is unnecessary for HTTP downloads. Existing `curl_cffi` and Pillow dependencies are reused.
+
+```bash
+python -m mmdl --source bilimanga --title "https://www.bilimanga.net/detail/<manga-id>.html" --chapters 1 --cbz
+python -m mmdl --source bilimanga --title "https://www.bilimanga.net/read/<manga-id>/<chapter-id>.html" --cbz
+```
+
+A manga ID, detail URL or `/read/<manga-id>/catalog` selects volumes; `--chapters` means volume numbers. A `/detail/<manga-id>/vol_<number>.html` URL selects that volume. A chapter reader URL selects only the current chapter. Each volume combines its chapters in catalogue order, including appendices. Catalogues without volume groups are treated as one volume. This source provides downloads only, without rankings, recent updates or search.
+
+Images retain their original dimensions and are converted from AVIF to lossless WebP for ZIP/CBZ/EPUB compatibility. Downloads resume under `manga_download/bilimanga/<title>`; archives are created per volume, or per chapter for a chapter reader URL. EPUB contains the downloaded images.
+
+The unified extension recognizes the site automatically. Reload it to grant the new BiliManga host permissions. When a page requires website verification or login, use the extension from a browser that can read it; current site cookies are passed to the local service in memory and refreshed during the job. Reading permissions still apply, and unresolved website verification fails explicitly.
+
 ## Pixiv Comic
 
 The native `pixivcomic` source follows the [Keiyoushi Pixiv Comic protocol](https://github.com/keiyoushi/extensions-source/tree/main/src/ja/pixivcomic) (Apache-2.0), using existing `curl_cffi`, Pillow and Publus decoding dependencies. No JVM is required.
@@ -406,7 +422,7 @@ Load [browser/ezmanga](browser/ezmanga) as an unpacked extension in Chrome/Edge.
 **Ezmanga Downloader**. When replacing the old BW-only extension, load this new directory and
 register the ID shown on the extensions page. Reload the extension after updating its files.
 
-Register its public ID once, then start one service for all seven implemented non-Keiyoushi sources:
+Register its public ID once, then start one service for all eight implemented non-Keiyoushi sources:
 
 ```bash
 python -m mmdl --register-extension <extension-id>
@@ -424,6 +440,7 @@ files are exported per chapter/volume in the same title folder.
 | BookWalker | Current Japanese manga reader URL | Current volume; keep reader and extension tabs open for in-memory session refresh |
 | Bilibili | Comic ID, detail URL or reader URL | Detail pages use the selected range; reader URLs select the current chapter; current browser cookies |
 | Pixiv Comic | Work ID, work/episode URL, store product or volume viewer URL | Readable serialized episodes; current episode for story readers; purchased/free volumes for store products; browser cookies |
+| BiliManga | Manga ID, detail/catalogue/volume URL or chapter reader URL | Volumes by range; chapter reader URLs select only the current chapter; mobile UA and optional browser cookies |
 | Tongli | Book ID, `/book?id=…` or `/reader/v2/index.html?bookID=…` URL | Current volume by default; set a range for other volumes; current webpage's Firebase ID token |
 | Light Novel Shelf | Manga ID or `/manga/<id>` URL | Selected range, or all volumes; refresh token from current site's IndexedDB |
 | MangaMillion | Official title/chapter URL or numeric `original_title_id` | Selected range, or all chapters; current browser device token; optional language and `middle`/`low` quality |

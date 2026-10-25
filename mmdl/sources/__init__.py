@@ -7,6 +7,7 @@ from . import kobo
 from . import lightnovel
 from . import keiyoushi
 from . import pixivcomic
+from . import bilimanga
 
 SOURCES = {
     "mangamillion": mangamillion.MCMillion,
@@ -17,6 +18,7 @@ SOURCES = {
     "lightnovel": lightnovel.Lightnovel,
     "keiyoushi": keiyoushi.Keiyoushi,
     "pixivcomic": pixivcomic.PixivComic,
+    "bilimanga": bilimanga.BiliManga,
 }
 
 
